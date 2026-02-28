@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: white;
+  color: black;
+}
+
+.dark body {
+  background-color: #111827;
+  color: white;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl shadow-lg p-4 bg-gray-100 dark:bg-gray-800;
+  }
+}
