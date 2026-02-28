@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import React, { useEffect, useState } from "react"
 import toast from "react-hot-toast"
 
 type Camp = {
@@ -29,7 +29,7 @@ function MyBookings() {
     const controller = new AbortController()
 
     const local = localStorage.getItem("bookings")
-    name.
+    
     if (local) {
       try {
         setBookings(JSON.parse(local))
