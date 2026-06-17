@@ -38,7 +38,8 @@ function MyBookings() {
       }
     }
 
-    fetch("http://localhost:4000/api/bookings", {
+   const API = import.meta.env.VITE_API_URL || "http://localhost:4000"
+fetch(`${API}/api/bookings`, {
       signal: controller.signal,
     })
       .then((res) => res.json())
@@ -64,7 +65,7 @@ function MyBookings() {
     try {
       setDeletingId(id)
 
-      await fetch(`http://localhost:4000/api/bookings/${id}`, {
+     await fetch(`${API}/api/bookings/${id}`, {
         method: "DELETE",
       })
 
