@@ -3,8 +3,7 @@ import Hero from "../components/Hero"
 import CampCard from "../components/CampCard"
 import { motion } from "framer-motion"
 import CampCardSkeleton from "../components/CampCardSkeleton"
-const API = (
-  import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, "")
+const API = (import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, "")
 
 export type Camp = {
   id: number
