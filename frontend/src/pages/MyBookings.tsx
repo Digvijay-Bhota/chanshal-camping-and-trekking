@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import toast from "react-hot-toast"
 
 type Camp = {
@@ -17,6 +17,10 @@ type Booking = {
   total: number
   camp?: Camp
 }
+
+const API = (
+  import.meta.env.VITE_API_URL || "http://localhost:4000"
+).replace(/\/$/, "")
 
 function MyBookings() {
   const [bookings, setBookings] = useState<Booking[]>([])
@@ -38,10 +42,7 @@ function MyBookings() {
       }
     }
 
-   const API = (
-  import.meta.env.VITE_API_URL || "http://localhost:4000"
-).replace(/\/$/, "")
-fetch(`${API}/api/bookings`, {
+    fetch(`${API}/api/bookings`, {
       signal: controller.signal,
     })
       .then((res) => res.json())
@@ -67,7 +68,7 @@ fetch(`${API}/api/bookings`, {
     try {
       setDeletingId(id)
 
-     await fetch(`${API}/api/bookings/${id}`, {
+      await fetch(`${API}/api/bookings/${id}`, {
         method: "DELETE",
       })
 
