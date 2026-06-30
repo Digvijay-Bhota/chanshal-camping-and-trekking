@@ -1,9 +1,9 @@
-import { motion } from "framer-motion"
+import { motion, type Variants } from "framer-motion"
 import { Link } from "react-router-dom"
 import { useState } from "react"
 import type { Camp } from "../pages/Home"
 
-const cardVariants = {
+const cardVariants: Variants = {
   hidden: { opacity: 0, y: 40 },
   show: {
     opacity: 1,
