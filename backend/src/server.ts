@@ -159,6 +159,16 @@ app.use((_: Request, res: Response) => {
    SERVER
 ========================= */
 
-app.listen(4000, () => {
-  console.log("🚀 Server running on http://localhost:4000")
-})
+const PORT = process.env.PORT || 4000
+
+// Vercel runs this file as a serverless function — it imports the
+// exported `app` and never needs a long-running listener. Calling
+// app.listen() unconditionally would try (and fail) to bind a port
+// inside the serverless runtime, so we only do it outside Vercel.
+if (process.env.VERCEL !== "1") {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`)
+  })
+}
+
+export default app
