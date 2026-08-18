@@ -1,9 +1,10 @@
 import express, { Request, Response } from "express"
 import cors from "cors"
+import { pool } from "./db"
 
 const app = express()
 
-//Comment
+// Comment
 app.use(cors())
 app.use(express.json())
 
@@ -53,6 +54,26 @@ const bookings: Booking[] = []
 // 🌐 ROOT
 app.get("/", (_: Request, res: Response) => {
   res.send("API is running 🚀")
+})
+
+// 🗄️ DATABASE HEALTH CHECK
+app.get("/api/health/db", async (_: Request, res: Response) => {
+  try {
+    const result = await pool.query("SELECT NOW()")
+
+    res.json({
+      status: "ok",
+      database: "connected",
+      time: result.rows[0].now,
+    })
+  } catch (error) {
+    console.error("Database health check failed:", error)
+
+    res.status(500).json({
+      status: "error",
+      database: "disconnected",
+    })
+  }
 })
 
 /* =========================
