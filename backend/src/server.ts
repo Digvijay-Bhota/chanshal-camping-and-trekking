@@ -5,6 +5,11 @@ import {
   findAllProperties,
   findPropertyById,
 } from "./modules/properties/property.repository"
+import {
+  findUserByEmail,
+  findUserByPhone,
+  createUser,
+} from "./modules/users/user.repository"
 
 const app = express()
 
@@ -77,6 +82,64 @@ app.get("/api/health/db", async (_: Request, res: Response) => {
       status: "error",
       database: "disconnected",
     })
+  }
+})
+
+/* =========================
+   USERS / AUTH
+========================= */
+
+// 🔐 USER LOGIN / REGISTER
+app.post("/api/users/login", async (req: Request, res: Response) => {
+  try {
+    const { name, email, phone } = req.body
+
+    if (!name || typeof name !== "string" || name.trim() === "") {
+      return res.status(400).json({ message: "Name is required" })
+    }
+
+    const trimmedName = name.trim()
+    const trimmedEmail = typeof email === "string" && email.trim() ? email.trim() : null
+    const trimmedPhone = typeof phone === "string" && phone.trim() ? phone.trim() : null
+
+    if (!trimmedEmail && !trimmedPhone) {
+      return res
+        .status(400)
+        .json({ message: "At least one of email or phone is required" })
+    }
+
+    let user = null
+    let isNewUser = false
+
+    if (trimmedEmail) {
+      user = await findUserByEmail(trimmedEmail)
+    }
+
+    if (!user && trimmedPhone) {
+      user = await findUserByPhone(trimmedPhone)
+    }
+
+    if (!user) {
+      user = await createUser({
+        name: trimmedName,
+        email: trimmedEmail,
+        phone: trimmedPhone,
+      })
+      isNewUser = true
+    }
+
+    const responseUser = {
+      id: user.id,
+      name: user.name,
+      email: user.email ?? null,
+      phone: user.phone ?? null,
+    }
+
+    const statusCode = isNewUser ? 201 : 200
+    return res.status(statusCode).json({ user: responseUser })
+  } catch (error) {
+    console.error("Failed to login or create user:", error)
+    return res.status(500).json({ message: "Failed to login or create user" })
   }
 })
 
