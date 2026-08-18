@@ -16,8 +16,9 @@ export type Camp = {
 
 /* 🔥 STAGGER CONTAINER */
 const containerVariants = {
-  hidden: {},
+  hidden: { opacity: 0 },
   show: {
+    opacity: 1,
     transition: {
       staggerChildren: 0.15,
     },

@@ -75,6 +75,14 @@ function Booking() {
   const today = new Date().toISOString().split("T")[0]
 
   const handleSubmit = async () => {
+    const userIdStr = localStorage.getItem("user_id")
+    const userId = userIdStr ? Number(userIdStr) : NaN
+
+    if (!userIdStr || !Number.isInteger(userId) || userId <= 0) {
+      toast.error("Please login to create a booking")
+      return
+    }
+
     if (!form.name || !form.phone || !form.date) {
       toast.error("Please fill all fields")
       return
@@ -90,15 +98,20 @@ function Booking() {
           ...form,
           campId: id,
           total,
+          userId,
         }),
       })
 
-      if (!res.ok) throw new Error()
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || "Booking failed")
+      }
 
       toast.success("Booking successful 🎉")
       navigate("/my-bookings")
-    } catch {
-      toast.error("Booking failed")
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Booking failed"
+      toast.error(message)
     } finally {
       setSubmitting(false)
     }
@@ -147,60 +160,95 @@ function Booking() {
           {/* 📝 FORM */}
           <div className="mt-6 space-y-4 pb-28">
 
-            <input
-              placeholder="Your Name"
-              value={form.name}
-              onChange={e =>
-                setForm({ ...form, name: e.target.value })
-              }
-              className="w-full p-3 rounded bg-white dark:bg-gray-700"
-            />
+            <div>
+              <label className="block text-sm font-semibold mb-1 text-gray-700 dark:text-gray-200">
+                👤 Full Name
+              </label>
+              <input
+                placeholder="Your Name"
+                value={form.name}
+                onChange={e =>
+                  setForm({ ...form, name: e.target.value })
+                }
+                className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-400 outline-none focus:border-green-500 transition"
+              />
+            </div>
 
-            <input
-              placeholder="Phone Number"
-              value={form.phone}
-              onChange={e =>
-                setForm({ ...form, phone: e.target.value })
-              }
-              className="w-full p-3 rounded bg-white dark:bg-gray-700"
-            />
+            <div>
+              <label className="block text-sm font-semibold mb-1 text-gray-700 dark:text-gray-200">
+                📞 Phone Number
+              </label>
+              <input
+                placeholder="Phone Number"
+                value={form.phone}
+                onChange={e =>
+                  setForm({ ...form, phone: e.target.value })
+                }
+                className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-400 outline-none focus:border-green-500 transition"
+              />
+            </div>
 
-            <input
-              type="date"
-              min={today}
-              value={form.date}
-              onChange={e =>
-                setForm({ ...form, date: e.target.value })
-              }
-              className="w-full p-3 rounded bg-white dark:bg-gray-700"
-            />
+            {/* 📅 STAY PARAMETERS SECTION */}
+            <div className="p-4 rounded-xl bg-gray-50 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700 space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-300 mb-2">
+                Stay Details
+              </h3>
 
-            <input
-              type="number"
-              min="1"
-              value={form.people}
-              onChange={e =>
-                setForm({
-                  ...form,
-                  people: Number(e.target.value),
-                })
-              }
-              className="w-full p-3 rounded bg-white dark:bg-gray-700"
-            />
+              <div>
+                <label className="block text-sm font-semibold mb-1 text-gray-700 dark:text-gray-200">
+                  📅 Check-in Date
+                </label>
+                <input
+                  type="date"
+                  min={today}
+                  value={form.date}
+                  onChange={e =>
+                    setForm({ ...form, date: e.target.value })
+                  }
+                  className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white dark:[color-scheme:dark] outline-none focus:border-green-500 transition"
+                />
+              </div>
 
-            <input
-              type="number"
-              min="1"
-              value={form.days}
-              onChange={e =>
-                setForm({
-                  ...form,
-                  days: Number(e.target.value),
-                })
-              }
-              className="w-full p-3 rounded bg-white dark:bg-gray-700"
-              placeholder="Days"
-            />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold mb-1 text-gray-700 dark:text-gray-200">
+                    👥 Number of Guests
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={form.people}
+                    onChange={e =>
+                      setForm({
+                        ...form,
+                        people: Number(e.target.value),
+                      })
+                    }
+                    className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-green-500 transition"
+                    placeholder="Number of People"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold mb-1 text-gray-700 dark:text-gray-200">
+                    🗓 Duration (Days)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={form.days}
+                    onChange={e =>
+                      setForm({
+                        ...form,
+                        days: Number(e.target.value),
+                      })
+                    }
+                    className="w-full p-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:border-green-500 transition"
+                    placeholder="Days"
+                  />
+                </div>
+              </div>
+            </div>
 
           </div>
 

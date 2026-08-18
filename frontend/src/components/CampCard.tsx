@@ -18,6 +18,8 @@ function CampCard({ camp }: { camp: Camp }) {
   return (
     <motion.div
       variants={cardVariants}
+      initial="hidden"
+      animate="show"
       whileHover={{ y: -8, scale: 1.02 }}
       className="group bg-gray-100 dark:bg-gray-800 rounded-xl overflow-hidden
                  shadow-lg hover:shadow-2xl hover:shadow-green-500/20 transition"
@@ -29,7 +31,6 @@ function CampCard({ camp }: { camp: Camp }) {
           layoutId={`camp-image-${camp.id}`}
           src={camp.image}
           alt={camp.name}
-          loading="lazy"
           onLoad={() => setLoaded(true)}
           className={`
             h-48 w-full object-cover

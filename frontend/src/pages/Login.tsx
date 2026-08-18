@@ -2,8 +2,11 @@ import { useEffect, useState } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import toast from "react-hot-toast"
 
+const API = (import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, "")
+
 function Login() {
   const [name, setName] = useState("")
+  const [email, setEmail] = useState("")
   const [loading, setLoading] = useState(false)
 
   const navigate = useNavigate()
@@ -19,23 +22,55 @@ function Login() {
   }, [navigate, from])
 
   // ✅ HANDLE LOGIN
-  const handleLogin = () => {
+  const handleLogin = async () => {
     const trimmedName = name.trim()
+    const trimmedEmail = email.trim()
 
     if (!trimmedName) {
       toast.error("Please enter your name")
       return
     }
 
+    if (!trimmedEmail) {
+      toast.error("Please enter your email")
+      return
+    }
+
     setLoading(true)
 
-    setTimeout(() => {
-      localStorage.setItem("user", trimmedName)
+    try {
+      const res = await fetch(`${API}/api/users/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          email: trimmedEmail,
+        }),
+      })
 
-      toast.success(`Welcome ${trimmedName} 🎉`)
+      const data = await res.json()
 
-      navigate(from, { replace: true })
-    }, 500)
+      if (!res.ok) {
+        throw new Error(data.message || "Login failed")
+      }
+
+      if (data.user) {
+        localStorage.setItem("user", data.user.name)
+        localStorage.setItem("user_id", String(data.user.id))
+        if (data.user.email) {
+          localStorage.setItem("user_email", data.user.email)
+        }
+
+        toast.success(`Welcome ${data.user.name} 🎉`)
+        navigate(from, { replace: true })
+      } else {
+        throw new Error("Invalid response from server")
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Login failed")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -55,18 +90,31 @@ function Login() {
           Login to view your bookings
         </p>
 
-        {/* INPUT */}
-        <input
-          autoFocus
-          type="text"
-          placeholder="Enter your name"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleLogin()}
-          className="w-full p-3 rounded
-                     bg-white dark:bg-gray-700
-                     outline-none"
-        />
+        {/* INPUTS */}
+        <div className="space-y-4">
+          <input
+            autoFocus
+            type="text"
+            placeholder="Enter your name"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleLogin()}
+            className="w-full p-3 rounded
+                       bg-white dark:bg-gray-700
+                       outline-none"
+          />
+
+          <input
+            type="email"
+            placeholder="Enter your email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleLogin()}
+            className="w-full p-3 rounded
+                       bg-white dark:bg-gray-700
+                       outline-none"
+          />
+        </div>
 
         {/* BUTTON */}
         <button

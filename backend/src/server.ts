@@ -6,59 +6,22 @@ import {
   findPropertyById,
 } from "./modules/properties/property.repository"
 import {
+  findUserById,
   findUserByEmail,
   findUserByPhone,
   createUser,
 } from "./modules/users/user.repository"
+import {
+  createBooking,
+  findAllBookings,
+  deleteBooking,
+} from "./modules/bookings/booking.repository"
 
 const app = express()
 
 // Comment
 app.use(cors())
 app.use(express.json())
-
-// 🏕️ TYPES
-type Camp = {
-  id: number
-  name: string
-  price: number
-  location: string
-  rating: number
-  image: string
-}
-
-type Booking = {
-  id: number
-  campId: number
-  name: string
-  phone: string
-  date: string
-  people: number
-  days: number
-  total: number
-}
-
-// 🏕️ DATA
-const camps: Camp[] = [
-  {
-    id: 1,
-    name: "Chanshal Trek",
-    price: 2500,
-    location: "Chopal",
-    rating: 4.8,
-    image: "https://images.unsplash.com/photo-1501785888041-af3ef285b470",
-  },
-  {
-    id: 2,
-    name: "Bijat Maharaj Camp",
-    price: 1800,
-    location: "Sarain",
-    rating: 4.6,
-    image: "https://images.unsplash.com/photo-1526772662000-3f88f10405ff",
-  },
-]
-
-const bookings: Booking[] = []
 
 // 🌐 ROOT
 app.get("/", (_: Request, res: Response) => {
@@ -214,69 +177,159 @@ app.get("/api/camps/:id", async (req: Request, res: Response) => {
 ========================= */
 
 // 🧾 CREATE BOOKING
-app.post("/api/bookings", (req: Request, res: Response) => {
-  const { campId, people, days, name, phone, date } = req.body
-
-  // ✅ BASIC VALIDATION
-  if (!campId || !name || !phone || !date) {
-    return res.status(400).json({
-      message: "Missing required fields",
-    })
-  }
-
-  const camp = camps.find(c => c.id === Number(campId))
-
-  if (!camp) {
-    return res.status(404).json({ message: "Camp not found" })
-  }
-
-  const total =
-    camp.price *
-    Number(people || 1) *
-    Number(days || 1)
-
-  const booking: Booking = {
-    id: bookings.length + 1,
-    campId: Number(campId),
+app.post("/api/bookings", async (req: Request, res: Response) => {
+  const {
+    campId,
+    propertyId,
     name,
     phone,
     date,
-    people: Number(people || 1),
-    days: Number(days || 1),
-    total,
+    checkIn,
+    checkOut,
+    people,
+    guests,
+    days,
+    userId,
+    user_id,
+  } = req.body
+
+  const rawUserId = userId || user_id
+  const parsedUserId = Number(rawUserId)
+
+  if (!rawUserId || !Number.isInteger(parsedUserId) || parsedUserId <= 0) {
+    return res.status(400).json({ message: "Valid userId is required" })
   }
 
-  bookings.push(booking)
+  const propId = Number(campId || propertyId)
+  if (!propId || isNaN(propId) || !name || !phone || (!date && !checkIn)) {
+    return res.status(400).json({ message: "Missing required fields" })
+  }
 
-  res.status(201).json({
-    message: "Booking saved",
-    booking,
-  })
+  try {
+    const user = await findUserById(parsedUserId)
+    if (!user) {
+      return res.status(404).json({ message: "User not found" })
+    }
+
+    const property = await findPropertyById(propId)
+    if (!property) {
+      return res.status(404).json({ message: "Camp not found" })
+    }
+
+    const guestsNum = Number(guests || people || 1)
+    const daysNum = Math.max(1, Number(days || 1))
+    const checkInStr = (checkIn || date).toString()
+
+    let checkOutStr = (checkOut || "").toString()
+    if (!checkOutStr) {
+      const inDate = new Date(checkInStr)
+      if (isNaN(inDate.getTime())) {
+        return res.status(400).json({ message: "Invalid check-in date" })
+      }
+      const outDate = new Date(inDate)
+      outDate.setDate(outDate.getDate() + daysNum)
+      checkOutStr = outDate.toISOString().split("T")[0]
+    }
+
+    // Calculate total on the server only: property.pricePerNight * guests * days
+    const totalAmount = property.pricePerNight * guestsNum * daysNum
+
+    const dbBooking = await createBooking({
+      userId: user.id,
+      propertyId: property.id,
+      checkIn: checkInStr,
+      checkOut: checkOutStr,
+      guests: guestsNum,
+      totalAmount,
+      status: "pending",
+    })
+
+    return res.status(201).json({
+      message: "Booking saved",
+      booking: {
+        id: dbBooking.id,
+        campId: dbBooking.propertyId,
+        name,
+        phone,
+        date: dbBooking.checkIn,
+        people: dbBooking.guests,
+        days: daysNum,
+        total: dbBooking.totalAmount,
+      },
+    })
+  } catch (error) {
+    console.error("Failed to create booking:", error)
+    return res.status(500).json({ message: "Failed to create booking" })
+  }
 })
 
-// 📄 GET BOOKINGS (WITH CAMP DETAILS)
-app.get("/api/bookings", (_: Request, res: Response) => {
-  const fullBookings = bookings.map(b => {
-    const camp = camps.find(c => c.id === b.campId)
-    return { ...b, camp }
-  })
+// 📄 GET BOOKINGS (WITH CAMP & USER DETAILS FROM POSTGRESQL)
+app.get("/api/bookings", async (_: Request, res: Response) => {
+  try {
+    const dbBookings = await findAllBookings()
+    const properties = await findAllProperties()
+    const propertiesMap = new Map(properties.map(p => [p.id, p]))
 
-  res.json(fullBookings)
+    const fullBookings = await Promise.all(
+      dbBookings.map(async b => {
+        const user = await findUserById(b.userId)
+        const property = propertiesMap.get(b.propertyId)
+
+        const camp = property
+          ? {
+              name: property.name,
+              image: property.imageUrl || "",
+              location: property.location,
+            }
+          : undefined
+
+        const inTime = new Date(b.checkIn).getTime()
+        const outTime = new Date(b.checkOut).getTime()
+        const days =
+          isNaN(inTime) || isNaN(outTime) || outTime <= inTime
+            ? 1
+            : Math.max(1, Math.round((outTime - inTime) / (1000 * 60 * 60 * 24)))
+
+        return {
+          id: b.id,
+          name: user ? user.name : "Guest",
+          phone: user && user.phone ? user.phone : "",
+          date: b.checkIn,
+          people: b.guests,
+          days,
+          total: b.totalAmount,
+          camp,
+        }
+      })
+    )
+
+    return res.json(fullBookings)
+  } catch (error) {
+    console.error("Failed to fetch bookings:", error)
+    return res.status(500).json({ message: "Failed to fetch bookings" })
+  }
 })
 
 // 🔴 DELETE BOOKING
-app.delete("/api/bookings/:id", (req: Request, res: Response) => {
+app.delete("/api/bookings/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id)
 
-  const index = bookings.findIndex(b => b.id === id)
-
-  if (index === -1) {
-    return res.status(404).json({ message: "Booking not found" })
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ message: "Invalid booking ID" })
   }
 
-  bookings.splice(index, 1)
+  try {
+    const success = await deleteBooking(id)
 
-  res.json({ message: "Booking cancelled" })
+    if (!success) {
+      return res.status(404).json({ message: "Booking not found" })
+    }
+
+    return res.json({ message: "Booking cancelled" })
+  } catch (error) {
+    console.error("Failed to delete booking:", error)
+    return res.status(500).json({ message: "Failed to cancel booking" })
+  }
 })
 
 /* =========================
