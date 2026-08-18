@@ -1,6 +1,10 @@
 import express, { Request, Response } from "express"
 import cors from "cors"
 import { pool } from "./db"
+import {
+  findAllProperties,
+  findPropertyById,
+} from "./modules/properties/property.repository"
 
 const app = express()
 
@@ -81,21 +85,65 @@ app.get("/api/health/db", async (_: Request, res: Response) => {
 ========================= */
 
 // 📦 GET ALL CAMPS
-app.get("/api/camps", (_: Request, res: Response) => {
-  res.json(camps)
+app.get("/api/camps", async (_: Request, res: Response) => {
+  try {
+    const properties = await findAllProperties()
+
+    const camps = properties.map(property => ({
+      id: property.id,
+      name: property.name,
+      price: property.pricePerNight,
+      location: property.location,
+      rating: property.rating,
+      image: property.imageUrl,
+    }))
+
+    res.json(camps)
+  } catch (error) {
+    console.error("Failed to fetch camps:", error)
+
+    res.status(500).json({
+      message: "Failed to fetch camps",
+    })
+  }
 })
 
 // 📦 GET SINGLE CAMP
-app.get("/api/camps/:id", (req: Request, res: Response) => {
+app.get("/api/camps/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id)
 
-  const camp = camps.find(c => c.id === id)
-
-  if (!camp) {
-    return res.status(404).json({ message: "Camp not found" })
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({
+      message: "Invalid camp ID",
+    })
   }
 
-  res.json(camp)
+  try {
+    const property = await findPropertyById(id)
+
+    if (!property) {
+      return res.status(404).json({
+        message: "Camp not found",
+      })
+    }
+
+    const camp = {
+      id: property.id,
+      name: property.name,
+      price: property.pricePerNight,
+      location: property.location,
+      rating: property.rating,
+      image: property.imageUrl,
+    }
+
+    res.json(camp)
+  } catch (error) {
+    console.error("Failed to fetch camp:", error)
+
+    res.status(500).json({
+      message: "Failed to fetch camp",
+    })
+  }
 })
 
 /* =========================
