@@ -34,6 +34,12 @@ function Booking() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
+  const [checkingAvailability, setCheckingAvailability] = useState(false)
+  const [availability, setAvailability] = useState<{
+    available: boolean
+    message: string
+  } | null>(null)
+
   const [form, setForm] = useState({
     name: user?.name || "",
     phone: user?.phone || "",
@@ -61,6 +67,51 @@ function Booking() {
       .finally(() => setLoading(false))
   }, [id])
 
+  // 🔍 CHECK AVAILABILITY
+  useEffect(() => {
+    if (!id || !form.date || !form.days || form.days < 1) {
+      setAvailability(null)
+      return
+    }
+
+    const controller = new AbortController()
+    setCheckingAvailability(true)
+
+    fetch(
+      `${API}/api/camps/${id}/availability?checkIn=${encodeURIComponent(form.date)}&days=${form.days}`,
+      {
+        credentials: "include",
+        signal: controller.signal,
+      }
+    )
+      .then(res => {
+        if (!res.ok) throw new Error()
+        return res.json()
+      })
+      .then(data => {
+        setAvailability({
+          available: Boolean(data.available),
+          message:
+            data.message ||
+            (data.available
+              ? "Dates are available"
+              : "Property is already booked for the selected dates"),
+        })
+      })
+      .catch(err => {
+        if (err.name !== "AbortError") {
+          setAvailability(null)
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setCheckingAvailability(false)
+        }
+      })
+
+    return () => controller.abort()
+  }, [id, form.date, form.days])
+
   if (loading)
     return (
       <div className="min-h-screen flex items-center justify-center text-xl animate-pulse">
@@ -81,6 +132,11 @@ function Booking() {
     Number(form.days || 1)
 
   const today = new Date().toISOString().split("T")[0]
+
+  const isSubmitDisabled =
+    submitting ||
+    checkingAvailability ||
+    (availability !== null && !availability.available)
 
   const handleSubmit = async () => {
     if (!isAuthenticated || !user) {
@@ -253,6 +309,27 @@ function Booking() {
                   />
                 </div>
               </div>
+
+              {/* 🔍 AVAILABILITY STATUS BADGE */}
+              {(checkingAvailability || availability !== null) && (
+                <div className="pt-1">
+                  {checkingAvailability ? (
+                    <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 animate-pulse">
+                      Checking availability...
+                    </span>
+                  ) : availability !== null ? (
+                    <span
+                      className={`text-xs font-bold ${
+                        availability.available
+                          ? "text-green-600 dark:text-green-400"
+                          : "text-red-600 dark:text-red-400"
+                      }`}
+                    >
+                      {availability.available ? "Available ✅" : "Already booked ❌"}
+                    </span>
+                  ) : null}
+                </div>
+              )}
             </div>
 
           </div>
@@ -267,7 +344,7 @@ function Booking() {
 
             <button
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={isSubmitDisabled}
               className="w-full mt-3 bg-green-500 py-3 rounded text-lg hover:bg-green-600 transition disabled:opacity-50"
             >
               {submitting ? "Processing..." : "Confirm Booking"}

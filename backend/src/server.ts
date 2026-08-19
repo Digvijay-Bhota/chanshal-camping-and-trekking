@@ -302,6 +302,101 @@ app.get("/api/camps/:id", async (req: Request, res: Response) => {
   }
 })
 
+// 📅 CHECK CAMP AVAILABILITY
+app.get("/api/camps/:id/availability", async (req: Request, res: Response) => {
+  const propId = Number(req.params.id)
+
+  if (!propId || !Number.isInteger(propId) || propId <= 0) {
+    return res.status(400).json({
+      message: "Invalid camp/property ID",
+    })
+  }
+
+  const { checkIn, days } = req.query
+
+  if (!checkIn || typeof checkIn !== "string" || !checkIn.trim()) {
+    return res.status(400).json({ message: "Invalid check-in date" })
+  }
+
+  const checkInStr = checkIn.trim().split("T")[0]
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (!dateRegex.test(checkInStr)) {
+    return res.status(400).json({ message: "Invalid check-in date" })
+  }
+
+  const [inYear, inMonth, inDay] = checkInStr.split("-").map(Number)
+  const inDateObj = new Date(inYear, inMonth - 1, inDay)
+  if (
+    isNaN(inDateObj.getTime()) ||
+    inDateObj.getFullYear() !== inYear ||
+    inDateObj.getMonth() !== inMonth - 1 ||
+    inDateObj.getDate() !== inDay
+  ) {
+    return res.status(400).json({ message: "Invalid check-in date" })
+  }
+
+  const now = new Date()
+  const todayYear = now.getFullYear()
+  const todayMonth = String(now.getMonth() + 1).padStart(2, "0")
+  const todayDay = String(now.getDate()).padStart(2, "0")
+  const todayStr = `${todayYear}-${todayMonth}-${todayDay}`
+
+  if (checkInStr < todayStr) {
+    return res
+      .status(400)
+      .json({ message: "Check-in date cannot be in the past" })
+  }
+
+  if (days === undefined || days === null || String(days).trim() === "") {
+    return res.status(400).json({ message: "Days must be a positive integer" })
+  }
+  const daysNum = Number(days)
+  if (!Number.isInteger(daysNum) || daysNum < 1) {
+    return res
+      .status(400)
+      .json({ message: "Days must be a positive integer" })
+  }
+
+  const inDate = new Date(inYear, inMonth - 1, inDay)
+  inDate.setDate(inDate.getDate() + daysNum)
+  const outYear = inDate.getFullYear()
+  const outMonth = String(inDate.getMonth() + 1).padStart(2, "0")
+  const outDay = String(inDate.getDate()).padStart(2, "0")
+  const checkOutStr = `${outYear}-${outMonth}-${outDay}`
+
+  try {
+    const property = await findPropertyById(propId)
+    if (!property) {
+      return res.status(404).json({ message: "Camp not found" })
+    }
+
+    const conflict = await findOverlappingBooking(
+      property.id,
+      checkInStr,
+      checkOutStr,
+    )
+
+    if (conflict) {
+      return res.status(200).json({
+        available: false,
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
+        message: "Property is already booked for the selected dates",
+      })
+    }
+
+    return res.status(200).json({
+      available: true,
+      checkIn: checkInStr,
+      checkOut: checkOutStr,
+      message: "Dates are available",
+    })
+  } catch (error) {
+    console.error("Failed to check availability:", error)
+    return res.status(500).json({ message: "Failed to check availability" })
+  }
+})
+
 /* =========================
    BOOKINGS
 ========================= */
