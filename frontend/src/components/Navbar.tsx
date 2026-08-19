@@ -146,12 +146,20 @@ function Navbar() {
           )}
 
           {isAuthenticated && user?.role === "admin" && (
-            <button
-              onClick={() => navigate("/admin/bookings")}
-              className={linkStyle("/admin/bookings")}
-            >
-              Admin Dashboard
-            </button>
+            <>
+              <button
+                onClick={() => navigate("/admin/bookings")}
+                className={linkStyle("/admin/bookings")}
+              >
+                Bookings
+              </button>
+              <button
+                onClick={() => navigate("/admin/properties")}
+                className={linkStyle("/admin/properties")}
+              >
+                Manage Properties
+              </button>
+            </>
           )}
 
           {/* THEME */}
@@ -179,12 +187,20 @@ function Navbar() {
                     <p className="mb-2 font-semibold">{user.name}</p>
 
                     {user.role === "admin" && (
-                      <button
-                        onClick={() => navigate("/admin/bookings")}
-                        className="block w-full text-left hover:text-green-500 mb-2"
-                      >
-                        Admin Dashboard
-                      </button>
+                      <>
+                        <button
+                          onClick={() => navigate("/admin/bookings")}
+                          className="block w-full text-left hover:text-green-500 mb-2"
+                        >
+                          Bookings
+                        </button>
+                        <button
+                          onClick={() => navigate("/admin/properties")}
+                          className="block w-full text-left hover:text-green-500 mb-2"
+                        >
+                          Manage Properties
+                        </button>
+                      </>
                     )}
 
                     <button
@@ -237,9 +253,14 @@ function Navbar() {
           )}
 
           {isAuthenticated && user?.role === "admin" && (
-            <button onClick={() => navigate("/admin/bookings")}>
-              Admin Dashboard
-            </button>
+            <>
+              <button onClick={() => navigate("/admin/bookings")}>
+                Bookings
+              </button>
+              <button onClick={() => navigate("/admin/properties")}>
+                Manage Properties
+              </button>
+            </>
           )}
 
           <button onClick={toggleTheme}>

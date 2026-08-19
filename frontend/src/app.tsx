@@ -12,6 +12,7 @@ import Booking from "./pages/Booking"
 import MyBookings from "./pages/MyBookings"
 import Login from "./pages/Login"
 import AdminDashboard from "./pages/AdminDashboard"
+import AdminProperties from "./pages/AdminProperties"
 
 /* ================= SCROLL TO TOP ================= */
 
@@ -87,6 +88,18 @@ function App() {
               <AdminRoute>
                 <PageWrapper>
                   <AdminDashboard />
+                </PageWrapper>
+              </AdminRoute>
+            }
+          />
+
+          {/* ⛺ ADMIN PROPERTIES */}
+          <Route
+            path="/admin/properties"
+            element={
+              <AdminRoute>
+                <PageWrapper>
+                  <AdminProperties />
                 </PageWrapper>
               </AdminRoute>
             }
