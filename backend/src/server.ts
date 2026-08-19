@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express"
 import cors from "cors"
 import cookieParser from "cookie-parser"
+import rateLimit from "express-rate-limit"
 import { pool } from "./db"
 import Razorpay from "razorpay"
 import {
@@ -221,7 +222,11 @@ app.post(
       // Return 200 for unknown / unhandled valid events
       return res.status(200).json({ message: "Webhook event received and ignored" })
     } catch (error) {
-      console.error("Failed to process Razorpay webhook:", error)
+      logError("Failed to process Razorpay webhook", {
+        route: "/api/payments/webhook",
+        method: "POST",
+        error,
+      })
       return res.status(500).json({ message: "Webhook processing failed" })
     }
   },
@@ -232,9 +237,124 @@ app.use(cookieParser())
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
-  sameSite: "lax" as const,
+  sameSite:
+    process.env.NODE_ENV === "production"
+      ? ("none" as const)
+      : ("lax" as const),
   secure: process.env.NODE_ENV === "production",
   maxAge: 7 * 24 * 60 * 60 * 1000,
+}
+
+// 🛡️ RATE LIMITERS
+export const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: "Too many authentication attempts. Please try again later.",
+  },
+})
+
+export const paymentLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: "Too many payment requests. Please try again later.",
+  },
+})
+
+export const bookingLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    message: "Too many booking requests. Please try again later.",
+  },
+})
+
+// 📝 STRUCTURED LOGGING HELPER
+export type LogContext = {
+  route?: string
+  method?: string
+  userId?: number
+  error?: unknown
+  [key: string]: unknown
+}
+
+function sanitizeContext(context?: LogContext): Record<string, unknown> | undefined {
+  if (!context) return undefined
+
+  const sanitized: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(context)) {
+    const lowerKey = key.toLowerCase()
+    if (
+      lowerKey.includes("password") ||
+      lowerKey.includes("secret") ||
+      lowerKey.includes("token") ||
+      lowerKey.includes("cookie") ||
+      lowerKey.includes("signature")
+    ) {
+      sanitized[key] = "[REDACTED]"
+      continue
+    }
+
+    if (value instanceof Error) {
+      sanitized[key] = {
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+      }
+    } else {
+      sanitized[key] = value
+    }
+  }
+
+  return sanitized
+}
+
+export function logInfo(message: string, context?: LogContext): void {
+  const sanitized = sanitizeContext(context)
+  if (process.env.NODE_ENV === "production") {
+    console.log(
+      JSON.stringify({
+        level: "info",
+        timestamp: new Date().toISOString(),
+        message,
+        ...(sanitized || {}),
+      }),
+    )
+  } else {
+    if (sanitized && Object.keys(sanitized).length > 0) {
+      console.log(`ℹ️  [INFO] ${message}`, sanitized)
+    } else {
+      console.log(`ℹ️  [INFO] ${message}`)
+    }
+  }
+}
+
+export function logError(message: string, context?: LogContext): void {
+  const sanitized = sanitizeContext(context)
+  if (process.env.NODE_ENV === "production") {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        timestamp: new Date().toISOString(),
+        message,
+        ...(sanitized || {}),
+      }),
+    )
+  } else {
+    if (sanitized && Object.keys(sanitized).length > 0) {
+      console.error(`🚨 [ERROR] ${message}`, sanitized)
+    } else {
+      console.error(`🚨 [ERROR] ${message}`)
+    }
+  }
 }
 
 // 🌐 ROOT
@@ -271,14 +391,14 @@ app.get(
   "/api/users/me",
   requireAuth,
   async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
+
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" })
+    }
+
     try {
-      const authReq = req as AuthenticatedRequest
-      const userId = authReq.userId
-
-      if (!userId || !Number.isInteger(userId) || userId <= 0) {
-        return res.status(401).json({ message: "Unauthorized" })
-      }
-
       const user = await findUserById(userId)
       if (!user) {
         return res.status(401).json({ message: "Unauthorized" })
@@ -294,14 +414,19 @@ app.get(
         },
       })
     } catch (error) {
-      console.error("Failed to fetch authenticated user:", error)
+      logError("Failed to fetch authenticated user", {
+        route: "/api/users/me",
+        method: "GET",
+        userId,
+        error,
+      })
       return res.status(500).json({ message: "Failed to fetch user" })
     }
   },
 )
 
 // 🔑 USER REGISTER
-app.post("/api/users/register", async (req: Request, res: Response) => {
+app.post("/api/users/register", authLimiter, async (req: Request, res: Response) => {
   try {
     const { name, email, phone, password } = req.body
 
@@ -350,13 +475,17 @@ app.post("/api/users/register", async (req: Request, res: Response) => {
       },
     })
   } catch (error) {
-    console.error("Failed to register user:", error)
+    logError("Failed to register user", {
+      route: "/api/users/register",
+      method: "POST",
+      error,
+    })
     return res.status(500).json({ message: "Failed to register user" })
   }
 })
 
 // 🔐 USER LOGIN
-app.post("/api/users/login", async (req: Request, res: Response) => {
+app.post("/api/users/login", authLimiter, async (req: Request, res: Response) => {
   try {
     const { email, phone, password } = req.body
 
@@ -410,7 +539,11 @@ app.post("/api/users/login", async (req: Request, res: Response) => {
 
     return res.status(200).json({ user: responseUser })
   } catch (error) {
-    console.error("Failed to login user:", error)
+    logError("Failed to login user", {
+      route: "/api/users/login",
+      method: "POST",
+      error,
+    })
     return res.status(500).json({ message: "Failed to login user" })
   }
 })
@@ -419,7 +552,10 @@ app.post("/api/users/login", async (req: Request, res: Response) => {
 app.post("/api/users/logout", (_: Request, res: Response) => {
   res.clearCookie("auth_token", {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite:
+      process.env.NODE_ENV === "production"
+        ? ("none" as const)
+        : ("lax" as const),
     secure: process.env.NODE_ENV === "production",
   })
   return res.status(200).json({ message: "Logged out" })
@@ -594,6 +730,7 @@ app.get("/api/camps/:id/availability", async (req: Request, res: Response) => {
 app.post(
   "/api/bookings",
   requireAuth,
+  bookingLimiter,
   async (req: Request, res: Response) => {
     const authReq = req as AuthenticatedRequest
     const userId = authReq.userId
@@ -783,7 +920,12 @@ app.post(
         },
       })
     } catch (error) {
-      console.error("Failed to create booking:", error)
+      logError("Failed to create booking", {
+        route: "/api/bookings",
+        method: "POST",
+        userId,
+        error,
+      })
       return res.status(500).json({ message: "Failed to create booking" })
     }
   },
@@ -845,7 +987,12 @@ app.get(
 
       return res.json(fullBookings)
     } catch (error) {
-      console.error("Failed to fetch bookings:", error)
+      logError("Failed to fetch bookings", {
+        route: "/api/bookings",
+        method: "GET",
+        userId,
+        error,
+      })
       return res.status(500).json({ message: "Failed to fetch bookings" })
     }
   },
@@ -1258,6 +1405,7 @@ function getRazorpayInstance(): Razorpay {
 app.post(
   "/api/payments/create-order",
   requireAuth,
+  paymentLimiter,
   async (req: Request, res: Response) => {
     const authReq = req as AuthenticatedRequest
     const userId = authReq.userId
@@ -1348,7 +1496,12 @@ app.post(
         keyId: process.env.RAZORPAY_KEY_ID,
       })
     } catch (error) {
-      console.error("Failed to create Razorpay payment order:", error)
+      logError("Failed to create Razorpay payment order", {
+        route: "/api/payments/create-order",
+        method: "POST",
+        userId,
+        error,
+      })
       return res
         .status(500)
         .json({ message: "Payment order creation failed" })
@@ -1360,6 +1513,7 @@ app.post(
 app.post(
   "/api/payments/verify",
   requireAuth,
+  paymentLimiter,
   async (req: Request, res: Response) => {
     const authReq = req as AuthenticatedRequest
     const userId = authReq.userId
@@ -1475,7 +1629,12 @@ app.post(
         bookingStatus: "confirmed",
       })
     } catch (error) {
-      console.error("Failed to verify payment signature:", error)
+      logError("Failed to verify payment signature", {
+        route: "/api/payments/verify",
+        method: "POST",
+        userId,
+        error,
+      })
       return res.status(500).json({ message: "Payment verification failed" })
     }
   },
@@ -1490,8 +1649,27 @@ app.use((_: Request, res: Response) => {
 })
 
 /* =========================
-   SERVER
+   SERVER & STARTUP VALIDATION
 ========================= */
+
+export function validateStartupEnvironment(): void {
+  const requiredEnvVars = [
+    "JWT_SECRET",
+    "DATABASE_URL",
+    "RAZORPAY_KEY_ID",
+    "RAZORPAY_KEY_SECRET",
+    "RAZORPAY_WEBHOOK_SECRET",
+  ]
+
+  for (const varName of requiredEnvVars) {
+    const val = process.env[varName]
+    if (!val || typeof val !== "string" || val.trim() === "") {
+      throw new Error(
+        `FATAL: Required environment variable ${varName} is missing or empty.`,
+      )
+    }
+  }
+}
 
 const PORT = process.env.PORT || 4000
 
@@ -1500,6 +1678,7 @@ const PORT = process.env.PORT || 4000
 // app.listen() unconditionally would try (and fail) to bind a port
 // inside the serverless runtime, so we only do it outside Vercel.
 if (process.env.VERCEL !== "1") {
+  validateStartupEnvironment()
   app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`)
   })

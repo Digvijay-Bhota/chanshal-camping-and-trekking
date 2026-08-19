@@ -365,12 +365,13 @@ export async function createBookingTransaction(
       )
     }
 
-    // 3. Check property exists
+    // 3. Check property exists & lock property row to serialize concurrent booking attempts for this camp
     const propRes = await client.query(
       `
         SELECT id, price_per_night
         FROM properties
         WHERE id = $1
+        FOR UPDATE
       `,
       [input.propertyId],
     )
