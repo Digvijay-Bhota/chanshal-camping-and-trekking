@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom"
 import { useEffect, useState } from "react"
 import toast from "react-hot-toast"
 import { motion } from "framer-motion"
+import { useAuth } from "../context/AuthContext"
 
 const API = (import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, "")
 
@@ -27,18 +28,25 @@ const contentVariants = {
 function Booking() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { user, isAuthenticated } = useAuth()
 
   const [camp, setCamp] = useState<Camp | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
   const [form, setForm] = useState({
-    name: localStorage.getItem("user") || "",
-    phone: "",
+    name: user?.name || "",
+    phone: user?.phone || "",
     date: "",
     people: 1,
     days: 1,
   })
+
+  useEffect(() => {
+    if (user?.name && !form.name) {
+      setForm(prev => ({ ...prev, name: user.name }))
+    }
+  }, [user?.name, form.name])
 
   useEffect(() => {
     if (!id) return
@@ -75,10 +83,7 @@ function Booking() {
   const today = new Date().toISOString().split("T")[0]
 
   const handleSubmit = async () => {
-    const userIdStr = localStorage.getItem("user_id")
-    const userId = userIdStr ? Number(userIdStr) : NaN
-
-    if (!userIdStr || !Number.isInteger(userId) || userId <= 0) {
+    if (!isAuthenticated || !user) {
       toast.error("Please login to create a booking")
       return
     }
@@ -94,11 +99,11 @@ function Booking() {
       const res = await fetch(`${API}/api/bookings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           ...form,
           campId: id,
           total,
-          userId,
         }),
       })
 

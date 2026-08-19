@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import toast from "react-hot-toast"
+import { useAuth } from "../context/AuthContext"
 
 type Camp = {
   name: string
@@ -23,63 +24,68 @@ const API = (
 ).replace(/\/$/, "")
 
 function MyBookings() {
+  const { isAuthenticated, loading: authLoading } = useAuth()
+
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [deletingId, setDeletingId] = useState<number | null>(null)
 
+  const fetchBookings = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`${API}/api/bookings`, {
+        credentials: "include",
+        signal,
+      })
+
+      if (!res.ok) {
+        throw new Error("Failed to load bookings")
+      }
+
+      const data: Booking[] = await res.json()
+      const sorted = [...data].reverse()
+
+      setBookings(sorted)
+      setError(false)
+    } catch (err) {
+      if (err instanceof Error && err.name !== "AbortError") {
+        setError(true)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   // ✅ LOAD BOOKINGS
   useEffect(() => {
+    if (authLoading || !isAuthenticated) return
+
     const controller = new AbortController()
-
-    const local = localStorage.getItem("bookings")
-    
-    if (local) {
-      try {
-        setBookings(JSON.parse(local))
-      } catch {
-        localStorage.removeItem("bookings")
-      }
-    }
-
-    fetch(`${API}/api/bookings`, {
-      signal: controller.signal,
-    })
-      .then((res) => res.json())
-      .then(data => {
-        const sorted = [...data].reverse()
-
-        setBookings(sorted)
-        localStorage.setItem("bookings", JSON.stringify(sorted))
-        setLoading(false)
-      })
-      .catch(err => {
-        if (err.name !== "AbortError") {
-          setError(true)
-          setLoading(false)
-        }
-      })
+    fetchBookings(controller.signal)
 
     return () => controller.abort()
-  }, [])
+  }, [authLoading, isAuthenticated, fetchBookings])
 
   // 🔴 CANCEL BOOKING
   const cancelBooking = async (id: number) => {
     try {
       setDeletingId(id)
 
-      await fetch(`${API}/api/bookings/${id}`, {
+      const res = await fetch(`${API}/api/bookings/${id}`, {
         method: "DELETE",
+        credentials: "include",
       })
 
-      const updated = bookings.filter(b => b.id !== id)
-
-      setBookings(updated)
-      localStorage.setItem("bookings", JSON.stringify(updated))
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.message || "Failed to cancel booking")
+      }
 
       toast.success("Booking cancelled ❌")
-    } catch {
-      toast.error("Failed to cancel booking")
+      await fetchBookings()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to cancel booking"
+      toast.error(message)
     } finally {
       setDeletingId(null)
     }
@@ -92,7 +98,7 @@ function MyBookings() {
     new Intl.NumberFormat("en-IN").format(amount)
 
   // ⛺ LOADING
-  if (loading)
+  if (authLoading || loading)
     return (
       <div className="min-h-screen flex items-center justify-center text-xl">
         ⛺ Loading bookings...

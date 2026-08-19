@@ -1,10 +1,15 @@
 import { useEffect, useState, useRef } from "react"
 import { useNavigate, useLocation } from "react-router-dom"
 import { Sun, Moon, User, Menu, X } from "lucide-react"
+import toast from "react-hot-toast"
+import { useAuth } from "../context/AuthContext"
+
+const API = (import.meta.env.VITE_API_URL || "http://localhost:4000").replace(/\/$/, "")
 
 function Navbar() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { user, isAuthenticated, refreshUser } = useAuth()
 
   const [scrolled, setScrolled] = useState(false)
   const [dark, setDark] = useState(false)
@@ -12,8 +17,6 @@ function Navbar() {
   const [mobile, setMobile] = useState(false)
 
   const menuRef = useRef<HTMLDivElement>(null)
-
-  const user = localStorage.getItem("user")
 
   /* ================= THEME ================= */
 
@@ -79,9 +82,24 @@ function Navbar() {
 
   /* ================= LOGOUT ================= */
 
-  const handleLogout = () => {
-    localStorage.removeItem("user")
-    navigate("/")
+  const handleLogout = async () => {
+    try {
+      const res = await fetch(`${API}/api/users/logout`, {
+        method: "POST",
+        credentials: "include",
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.message || "Logout failed")
+      }
+
+      await refreshUser()
+      navigate("/")
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Logout failed"
+      toast.error(message)
+    }
   }
 
   /* ================= ACTIVE LINK ================= */
@@ -118,7 +136,7 @@ function Navbar() {
             Home
           </button>
 
-          {user && (
+          {isAuthenticated && (
             <button
               onClick={() => navigate("/my-bookings")}
               className={linkStyle("/my-bookings")}
@@ -147,9 +165,9 @@ function Navbar() {
                               bg-white dark:bg-gray-800
                               p-3 rounded-lg shadow-lg">
 
-                {user ? (
+                {isAuthenticated && user ? (
                   <>
-                    <p className="mb-2 font-semibold">{user}</p>
+                    <p className="mb-2 font-semibold">{user.name}</p>
 
                     <button
                       onClick={() => navigate("/my-bookings")}
@@ -194,7 +212,7 @@ function Navbar() {
 
           <button onClick={() => navigate("/")}>Home</button>
 
-          {user && (
+          {isAuthenticated && (
             <button onClick={() => navigate("/my-bookings")}>
               My Bookings
             </button>
@@ -204,7 +222,7 @@ function Navbar() {
             {dark ? "Light Mode" : "Dark Mode"}
           </button>
 
-          {user ? (
+          {isAuthenticated ? (
             <button
               onClick={handleLogout}
               className="text-red-500"

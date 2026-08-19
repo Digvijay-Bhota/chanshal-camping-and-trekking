@@ -30,7 +30,12 @@ import {
 const app = express()
 
 // Comment
-app.use(cors())
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    credentials: true,
+  }),
+)
 app.use(express.json())
 app.use(cookieParser())
 
@@ -216,6 +221,16 @@ app.post("/api/users/login", async (req: Request, res: Response) => {
     console.error("Failed to login user:", error)
     return res.status(500).json({ message: "Failed to login user" })
   }
+})
+
+// 🚪 USER LOGOUT
+app.post("/api/users/logout", (_: Request, res: Response) => {
+  res.clearCookie("auth_token", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  })
+  return res.status(200).json({ message: "Logged out" })
 })
 
 /* =========================
