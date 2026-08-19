@@ -365,3 +365,202 @@ export async function markPaymentFailed(
 
   return mapRowToPayment(result.rows[0])
 }
+
+export type PrepareRefundResult =
+  | {
+      status: "ready"
+      payment: Payment
+      bookingId: number
+    }
+  | { status: "not_found" }
+  | { status: "unauthorized" }
+  | { status: "not_paid" }
+  | { status: "already_refunded" }
+  | { status: "missing_payment_id" }
+
+export async function prepareRefundTransaction(
+  bookingId: number,
+  userId?: number,
+): Promise<PrepareRefundResult> {
+  const client = await pool.connect()
+  try {
+    await client.query("BEGIN")
+
+    // 1. Lock booking row
+    const bookingRes = await client.query<{
+      id: number
+      user_id: number
+      status: string
+      payment_status: string
+    }>(
+      `
+        SELECT id, user_id, status, payment_status
+        FROM bookings
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [bookingId],
+    )
+
+    if (bookingRes.rows.length === 0) {
+      await client.query("ROLLBACK")
+      return { status: "not_found" }
+    }
+
+    const bookingRow = bookingRes.rows[0]
+
+    if (userId !== undefined && Number(bookingRow.user_id) !== userId) {
+      await client.query("ROLLBACK")
+      return { status: "unauthorized" }
+    }
+
+    if (bookingRow.payment_status !== "paid") {
+      await client.query("ROLLBACK")
+      return { status: "not_paid" }
+    }
+
+    // 2. Lock payment row
+    const paymentRes = await client.query<PaymentRow>(
+      `
+        SELECT
+          id,
+          booking_id,
+          user_id,
+          provider,
+          provider_payment_id,
+          provider_order_id,
+          provider_signature,
+          amount,
+          currency,
+          status,
+          payment_method,
+          error_message,
+          created_at,
+          updated_at
+        FROM payments
+        WHERE booking_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [bookingId],
+    )
+
+    if (paymentRes.rows.length === 0) {
+      await client.query("ROLLBACK")
+      return { status: "not_found" }
+    }
+
+    const paymentRow = paymentRes.rows[0]
+    const payment = mapRowToPayment(paymentRow)
+
+    if (
+      payment.status === "refunded" ||
+      payment.status === "refund_pending"
+    ) {
+      await client.query("ROLLBACK")
+      return { status: "already_refunded" }
+    }
+
+    if (payment.status !== "captured" || !payment.providerPaymentId) {
+      await client.query("ROLLBACK")
+      if (!payment.providerPaymentId) {
+        return { status: "missing_payment_id" }
+      }
+      return { status: "not_paid" }
+    }
+
+    // 3. Mark payment status as 'refund_pending'
+    await client.query(
+      `
+        UPDATE payments
+        SET status = 'refund_pending', updated_at = NOW()
+        WHERE id = $1
+      `,
+      [payment.id],
+    )
+
+    await client.query("COMMIT")
+
+    return {
+      status: "ready",
+      payment,
+      bookingId: Number(bookingRow.id),
+    }
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function recordRefundSuccess(
+  paymentId: number,
+  bookingId: number,
+  refundId: string,
+): Promise<boolean> {
+  const client = await pool.connect()
+  try {
+    await client.query("BEGIN")
+
+    await client.query(
+      `
+        UPDATE payments
+        SET status = 'refunded',
+            provider_signature = $2,
+            updated_at = NOW()
+        WHERE id = $1
+      `,
+      [paymentId, refundId],
+    )
+
+    await client.query(
+      `
+        UPDATE bookings
+        SET payment_status = 'refunded',
+            status = 'cancelled',
+            updated_at = NOW()
+        WHERE id = $1
+      `,
+      [bookingId],
+    )
+
+    await client.query("COMMIT")
+    return true
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function recordRefundFailure(
+  paymentId: number,
+  errorMessage: string,
+): Promise<boolean> {
+  const client = await pool.connect()
+  try {
+    await client.query("BEGIN")
+
+    await client.query(
+      `
+        UPDATE payments
+        SET status = 'refund_failed',
+            error_message = $2,
+            updated_at = NOW()
+        WHERE id = $1
+      `,
+      [paymentId, errorMessage],
+    )
+
+    await client.query("COMMIT")
+    return true
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw error
+  } finally {
+    client.release()
+  }
+}

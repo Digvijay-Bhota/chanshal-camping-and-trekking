@@ -19,6 +19,9 @@ import {
   findPaymentByOrderId,
   capturePaymentAndConfirmBooking,
   markPaymentFailed,
+  prepareRefundTransaction,
+  recordRefundSuccess,
+  recordRefundFailure,
 } from "./modules/payments/payment.repository"
 import {
   findUserById,
@@ -998,6 +1001,83 @@ app.get(
   },
 )
 
+// 💳 FULL REFUND AND CANCELLATION HELPER
+async function processFullRefundAndCancellation(
+  bookingId: number,
+  userId?: number,
+): Promise<
+  | { status: "success"; message: string }
+  | { status: "not_found" }
+  | { status: "unauthorized" }
+  | { status: "not_paid" }
+  | { status: "already_refunded" }
+  | { status: "refund_failed"; message: string }
+> {
+  const prep = await prepareRefundTransaction(bookingId, userId)
+  if (prep.status !== "ready") {
+    if (prep.status === "already_refunded") {
+      return { status: "already_refunded" }
+    }
+    if (prep.status === "unauthorized") {
+      return { status: "unauthorized" }
+    }
+    if (prep.status === "not_found") {
+      return { status: "not_found" }
+    }
+    if (prep.status === "not_paid") {
+      return { status: "not_paid" }
+    }
+    return { status: "refund_failed", message: "Missing Razorpay payment ID for refund" }
+  }
+
+  const { payment } = prep
+  const amountInPaise = Math.round(payment.amount * 100)
+
+  let refundId = ""
+  let rzpError: string | null = null
+
+  try {
+    const razorpay = getRazorpayInstance()
+    const rzpRefund = await razorpay.payments.refund(payment.providerPaymentId!, {
+      amount: amountInPaise,
+      notes: {
+        bookingId: String(bookingId),
+        paymentId: String(payment.id),
+      },
+    })
+    refundId = rzpRefund.id
+  } catch (err) {
+    rzpError = err instanceof Error ? err.message : "Razorpay refund execution failed"
+  }
+
+  if (!rzpError && refundId) {
+    try {
+      await recordRefundSuccess(payment.id, bookingId, refundId)
+      return { status: "success", message: "Booking cancelled and payment refunded" }
+    } catch (dbErr) {
+      logError("CRITICAL RECONCILIATION ERROR: Gateway refund succeeded but DB update failed", {
+        route: "processFullRefundAndCancellation",
+        bookingId,
+        paymentId: payment.id,
+        refundId,
+        error: dbErr,
+      })
+      return { status: "success", message: "Booking cancelled and payment refunded" }
+    }
+  } else {
+    try {
+      await recordRefundFailure(payment.id, rzpError || "Refund failed")
+    } catch (dbErr) {
+      logError("Failed to record refund failure in DB", {
+        route: "processFullRefundAndCancellation",
+        bookingId,
+        error: dbErr,
+      })
+    }
+    return { status: "refund_failed", message: rzpError || "Razorpay refund failed" }
+  }
+}
+
 // 🔴 DELETE BOOKING
 app.delete(
   "/api/bookings/:id",
@@ -1016,15 +1096,59 @@ app.delete(
     }
 
     try {
+      const booking = await findBookingById(id)
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" })
+      }
+
+      if (booking.userId !== userId) {
+        return res.status(403).json({ message: "Unauthorized" })
+      }
+
+      if (booking.status === "cancelled") {
+        return res.status(400).json({ message: "Booking is already cancelled" })
+      }
+
+      if (booking.paymentStatus === "paid") {
+        const refundResult = await processFullRefundAndCancellation(id, userId)
+
+        if (refundResult.status === "success") {
+          return res.status(200).json({ message: "Booking cancelled and payment refunded" })
+        }
+        if (refundResult.status === "already_refunded") {
+          return res.status(400).json({ message: "Refund already processed for this booking" })
+        }
+        if (refundResult.status === "unauthorized") {
+          return res.status(403).json({ message: "Unauthorized" })
+        }
+        if (refundResult.status === "not_found") {
+          return res.status(404).json({ message: "Booking not found" })
+        }
+        if (refundResult.status === "refund_failed") {
+          return res.status(502).json({
+            message: refundResult.message || "Failed to process refund for booking cancellation",
+          })
+        }
+
+        return res.status(502).json({
+          message: "Failed to process refund for booking cancellation",
+        })
+      }
+
       const success = await cancelBookingForUser(id, userId)
 
       if (!success) {
         return res.status(404).json({ message: "Booking not found" })
       }
 
-      return res.json({ message: "Booking cancelled" })
+      return res.status(200).json({ message: "Booking cancelled" })
     } catch (error) {
-      console.error("Failed to cancel booking:", error)
+      logError("Failed to cancel booking", {
+        route: "/api/bookings/:id",
+        method: "DELETE",
+        userId,
+        error,
+      })
       return res.status(500).json({ message: "Failed to cancel booking" })
     }
   },
@@ -1039,12 +1163,20 @@ app.get(
   "/api/admin/bookings",
   requireAuth,
   requireAdmin,
-  async (_: Request, res: Response) => {
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
+
     try {
       const bookings = await findAllBookingsWithDetails()
       return res.status(200).json(bookings)
     } catch (error) {
-      console.error("Failed to fetch admin bookings:", error)
+      logError("Failed to fetch admin bookings", {
+        route: "/api/admin/bookings",
+        method: "GET",
+        userId,
+        error,
+      })
       return res.status(500).json({ message: "Failed to fetch bookings" })
     }
   },
@@ -1056,6 +1188,9 @@ app.patch(
   requireAuth,
   requireAdmin,
   async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
+
     const id = Number(req.params.id)
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ message: "Invalid booking ID" })
@@ -1089,6 +1224,32 @@ app.patch(
         return res.status(400).json({ message: "Invalid status transition" })
       }
 
+      if (status === "cancelled" && booking.paymentStatus === "paid") {
+        const refundResult = await processFullRefundAndCancellation(id)
+
+        if (refundResult.status === "success") {
+          const updatedBooking = await findBookingById(id)
+          return res.status(200).json({
+            message: "Booking status updated to cancelled and payment refunded",
+            booking: updatedBooking || booking,
+          })
+        }
+
+        if (refundResult.status === "already_refunded") {
+          return res.status(400).json({ message: "Refund already processed for this booking" })
+        }
+
+        if (refundResult.status === "refund_failed") {
+          return res.status(502).json({
+            message: refundResult.message || "Failed to process refund for admin booking cancellation",
+          })
+        }
+
+        return res.status(502).json({
+          message: "Failed to process refund for admin booking cancellation",
+        })
+      }
+
       const updatedBooking = await updateBookingStatus(
         id,
         booking.status,
@@ -1105,7 +1266,12 @@ app.patch(
         booking: updatedBooking,
       })
     } catch (error) {
-      console.error("Failed to update booking status:", error)
+      logError("Failed to update booking status", {
+        route: "/api/admin/bookings/:id/status",
+        method: "PATCH",
+        userId,
+        error,
+      })
       return res.status(500).json({ message: "Failed to update booking status" })
     }
   },
