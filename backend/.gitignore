@@ -1,5 +1,7 @@
 node_modules/
 dist/
+cookies.txt
+security-cookies.txt
 .env
 .env.*
 !.env.example

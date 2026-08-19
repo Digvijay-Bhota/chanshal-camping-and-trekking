@@ -38,7 +38,10 @@ export type BookingRow = {
 
 function formatDate(val: string | Date): string {
   if (val instanceof Date) {
-    return val.toISOString().split("T")[0]
+    const year = val.getFullYear()
+    const month = String(val.getMonth() + 1).padStart(2, "0")
+    const day = String(val.getDate()).padStart(2, "0")
+    return `${year}-${month}-${day}`
   }
   if (typeof val === "string") {
     return val.split("T")[0]
@@ -158,6 +161,47 @@ export async function deleteBooking(id: number): Promise<boolean> {
       WHERE id = $1
     `,
     [id],
+  )
+
+  return (result.rowCount ?? 0) > 0
+}
+
+export async function findBookingsByUserId(
+  userId: number,
+): Promise<Booking[]> {
+  const result = await pool.query<BookingRow>(
+    `
+      SELECT
+        id,
+        user_id,
+        property_id,
+        check_in,
+        check_out,
+        guests,
+        total_amount,
+        status,
+        created_at,
+        updated_at
+      FROM bookings
+      WHERE user_id = $1
+      ORDER BY id ASC
+    `,
+    [userId],
+  )
+
+  return result.rows.map(mapRowToBooking)
+}
+
+export async function deleteBookingForUser(
+  id: number,
+  userId: number,
+): Promise<boolean> {
+  const result = await pool.query(
+    `
+      DELETE FROM bookings
+      WHERE id = $1 AND user_id = $2
+    `,
+    [id, userId],
   )
 
   return (result.rowCount ?? 0) > 0

@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express"
 import cors from "cors"
+import cookieParser from "cookie-parser"
 import { pool } from "./db"
 import {
   findAllProperties,
@@ -10,11 +11,20 @@ import {
   findUserByEmail,
   findUserByPhone,
   createUser,
+  updateUserPhone,
 } from "./modules/users/user.repository"
+import { hashPassword, verifyPassword } from "./modules/users/password.util"
+import { signAuthToken } from "./modules/auth/auth.util"
 import {
+  requireAuth,
+  AuthenticatedRequest,
+} from "./modules/auth/auth.middleware"
+import {
+  Booking,
   createBooking,
   findAllBookings,
-  deleteBooking,
+  findBookingsByUserId,
+  deleteBookingForUser,
 } from "./modules/bookings/booking.repository"
 
 const app = express()
@@ -22,6 +32,14 @@ const app = express()
 // Comment
 app.use(cors())
 app.use(express.json())
+app.use(cookieParser())
+
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax" as const,
+  secure: process.env.NODE_ENV === "production",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+}
 
 // 🌐 ROOT
 app.get("/", (_: Request, res: Response) => {
@@ -52,18 +70,111 @@ app.get("/api/health/db", async (_: Request, res: Response) => {
    USERS / AUTH
 ========================= */
 
-// 🔐 USER LOGIN / REGISTER
-app.post("/api/users/login", async (req: Request, res: Response) => {
+// 👤 CURRENT USER
+app.get(
+  "/api/users/me",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const authReq = req as AuthenticatedRequest
+      const userId = authReq.userId
+
+      if (!userId || !Number.isInteger(userId) || userId <= 0) {
+        return res.status(401).json({ message: "Unauthorized" })
+      }
+
+      const user = await findUserById(userId)
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" })
+      }
+
+      return res.json({
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email ?? null,
+          phone: user.phone ?? null,
+        },
+      })
+    } catch (error) {
+      console.error("Failed to fetch authenticated user:", error)
+      return res.status(500).json({ message: "Failed to fetch user" })
+    }
+  },
+)
+
+// 🔑 USER REGISTER
+app.post("/api/users/register", async (req: Request, res: Response) => {
   try {
-    const { name, email, phone } = req.body
+    const { name, email, phone, password } = req.body
 
     if (!name || typeof name !== "string" || name.trim() === "") {
       return res.status(400).json({ message: "Name is required" })
     }
 
+    if (!email || typeof email !== "string" || email.trim() === "") {
+      return res.status(400).json({ message: "Email is required" })
+    }
+
+    if (!password || typeof password !== "string" || password.length < 8) {
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 8 characters long" })
+    }
+
     const trimmedName = name.trim()
-    const trimmedEmail = typeof email === "string" && email.trim() ? email.trim() : null
-    const trimmedPhone = typeof phone === "string" && phone.trim() ? phone.trim() : null
+    const trimmedEmail = email.trim().toLowerCase()
+    const trimmedPhone =
+      typeof phone === "string" && phone.trim() ? phone.trim() : null
+
+    const existingUser = await findUserByEmail(trimmedEmail)
+    if (existingUser) {
+      return res.status(409).json({ message: "Email already registered" })
+    }
+
+    const passwordHash = await hashPassword(password)
+
+    const user = await createUser({
+      name: trimmedName,
+      email: trimmedEmail,
+      phone: trimmedPhone,
+      passwordHash,
+    })
+
+    const token = signAuthToken(user.id)
+    res.cookie("auth_token", token, COOKIE_OPTIONS)
+
+    return res.status(201).json({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email ?? null,
+        phone: user.phone ?? null,
+      },
+    })
+  } catch (error) {
+    console.error("Failed to register user:", error)
+    return res.status(500).json({ message: "Failed to register user" })
+  }
+})
+
+// 🔐 USER LOGIN
+app.post("/api/users/login", async (req: Request, res: Response) => {
+  try {
+    const { email, phone, password } = req.body
+
+    if (!password || typeof password !== "string" || password.length < 8) {
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 8 characters long" })
+    }
+
+    const trimmedEmail =
+      typeof email === "string" && email.trim()
+        ? email.trim().toLowerCase()
+        : null
+    const trimmedPhone =
+      typeof phone === "string" && phone.trim() ? phone.trim() : null
 
     if (!trimmedEmail && !trimmedPhone) {
       return res
@@ -72,7 +183,6 @@ app.post("/api/users/login", async (req: Request, res: Response) => {
     }
 
     let user = null
-    let isNewUser = false
 
     if (trimmedEmail) {
       user = await findUserByEmail(trimmedEmail)
@@ -82,14 +192,17 @@ app.post("/api/users/login", async (req: Request, res: Response) => {
       user = await findUserByPhone(trimmedPhone)
     }
 
-    if (!user) {
-      user = await createUser({
-        name: trimmedName,
-        email: trimmedEmail,
-        phone: trimmedPhone,
-      })
-      isNewUser = true
+    if (!user || !user.passwordHash) {
+      return res.status(401).json({ message: "Invalid credentials" })
     }
+
+    const isValidPassword = await verifyPassword(password, user.passwordHash)
+    if (!isValidPassword) {
+      return res.status(401).json({ message: "Invalid credentials" })
+    }
+
+    const token = signAuthToken(user.id)
+    res.cookie("auth_token", token, COOKIE_OPTIONS)
 
     const responseUser = {
       id: user.id,
@@ -98,11 +211,10 @@ app.post("/api/users/login", async (req: Request, res: Response) => {
       phone: user.phone ?? null,
     }
 
-    const statusCode = isNewUser ? 201 : 200
-    return res.status(statusCode).json({ user: responseUser })
+    return res.status(200).json({ user: responseUser })
   } catch (error) {
-    console.error("Failed to login or create user:", error)
-    return res.status(500).json({ message: "Failed to login or create user" })
+    console.error("Failed to login user:", error)
+    return res.status(500).json({ message: "Failed to login user" })
   }
 })
 
@@ -177,102 +289,133 @@ app.get("/api/camps/:id", async (req: Request, res: Response) => {
 ========================= */
 
 // 🧾 CREATE BOOKING
-app.post("/api/bookings", async (req: Request, res: Response) => {
-  const {
-    campId,
-    propertyId,
-    name,
-    phone,
-    date,
-    checkIn,
-    checkOut,
-    people,
-    guests,
-    days,
-    userId,
-    user_id,
-  } = req.body
+app.post(
+  "/api/bookings",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
 
-  const rawUserId = userId || user_id
-  const parsedUserId = Number(rawUserId)
-
-  if (!rawUserId || !Number.isInteger(parsedUserId) || parsedUserId <= 0) {
-    return res.status(400).json({ message: "Valid userId is required" })
-  }
-
-  const propId = Number(campId || propertyId)
-  if (!propId || isNaN(propId) || !name || !phone || (!date && !checkIn)) {
-    return res.status(400).json({ message: "Missing required fields" })
-  }
-
-  try {
-    const user = await findUserById(parsedUserId)
-    if (!user) {
-      return res.status(404).json({ message: "User not found" })
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" })
     }
 
-    const property = await findPropertyById(propId)
-    if (!property) {
-      return res.status(404).json({ message: "Camp not found" })
+    const {
+      campId,
+      propertyId,
+      name,
+      phone,
+      date,
+      checkIn,
+      checkOut,
+      people,
+      guests,
+      days,
+    } = req.body
+
+    const propId = Number(campId || propertyId)
+    if (!propId || isNaN(propId) || !name || !phone || (!date && !checkIn)) {
+      return res.status(400).json({ message: "Missing required fields" })
     }
 
-    const guestsNum = Number(guests || people || 1)
-    const daysNum = Math.max(1, Number(days || 1))
-    const checkInStr = (checkIn || date).toString()
-
-    let checkOutStr = (checkOut || "").toString()
-    if (!checkOutStr) {
-      const inDate = new Date(checkInStr)
-      if (isNaN(inDate.getTime())) {
-        return res.status(400).json({ message: "Invalid check-in date" })
+    try {
+      let user = await findUserById(userId)
+      if (!user) {
+        return res.status(404).json({ message: "User not found" })
       }
-      const outDate = new Date(inDate)
-      outDate.setDate(outDate.getDate() + daysNum)
-      checkOutStr = outDate.toISOString().split("T")[0]
+
+      const trimmedPhone =
+        typeof phone === "string" && phone.trim() ? phone.trim() : null
+      if (trimmedPhone && trimmedPhone !== user.phone) {
+        const updatedUser = await updateUserPhone(userId, trimmedPhone)
+        if (updatedUser) {
+          user = updatedUser
+        }
+      }
+
+      const property = await findPropertyById(propId)
+      if (!property) {
+        return res.status(404).json({ message: "Camp not found" })
+      }
+
+      const guestsNum = Number(guests || people || 1)
+      const daysNum = Math.max(1, Number(days || 1))
+      const checkInStr = (checkIn || date).toString().split("T")[0]
+
+      let checkOutStr = (checkOut || "").toString().split("T")[0]
+      if (!checkOutStr) {
+        const parts = checkInStr.split("-").map(Number)
+        if (parts.length !== 3 || parts.some((p: number) => isNaN(p))) {
+          return res.status(400).json({ message: "Invalid check-in date" })
+        }
+        const [year, month, day] = parts
+        const inDate = new Date(year, month - 1, day)
+        if (isNaN(inDate.getTime())) {
+          return res.status(400).json({ message: "Invalid check-in date" })
+        }
+        inDate.setDate(inDate.getDate() + daysNum)
+        const outYear = inDate.getFullYear()
+        const outMonth = String(inDate.getMonth() + 1).padStart(2, "0")
+        const outDay = String(inDate.getDate()).padStart(2, "0")
+        checkOutStr = `${outYear}-${outMonth}-${outDay}`
+      }
+
+      // Calculate total on the server only: property.pricePerNight * guests * days
+      const totalAmount = property.pricePerNight * guestsNum * daysNum
+
+      const dbBooking = await createBooking({
+        userId: user.id,
+        propertyId: property.id,
+        checkIn: checkInStr,
+        checkOut: checkOutStr,
+        guests: guestsNum,
+        totalAmount,
+        status: "pending",
+      })
+
+      return res.status(201).json({
+        message: "Booking saved",
+        booking: {
+          id: dbBooking.id,
+          campId: dbBooking.propertyId,
+          name,
+          phone,
+          date: dbBooking.checkIn,
+          people: dbBooking.guests,
+          days: daysNum,
+          total: dbBooking.totalAmount,
+        },
+      })
+    } catch (error) {
+      console.error("Failed to create booking:", error)
+      return res.status(500).json({ message: "Failed to create booking" })
+    }
+  },
+)
+
+// 📄 GET BOOKINGS (FOR AUTHENTICATED USER)
+app.get(
+  "/api/bookings",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
+
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" })
     }
 
-    // Calculate total on the server only: property.pricePerNight * guests * days
-    const totalAmount = property.pricePerNight * guestsNum * daysNum
+    try {
+      const user = await findUserById(userId)
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" })
+      }
 
-    const dbBooking = await createBooking({
-      userId: user.id,
-      propertyId: property.id,
-      checkIn: checkInStr,
-      checkOut: checkOutStr,
-      guests: guestsNum,
-      totalAmount,
-      status: "pending",
-    })
+      const dbBookings = await findBookingsByUserId(userId)
+      const properties = await findAllProperties()
+      const propertiesMap = new Map(properties.map(p => [p.id, p]))
 
-    return res.status(201).json({
-      message: "Booking saved",
-      booking: {
-        id: dbBooking.id,
-        campId: dbBooking.propertyId,
-        name,
-        phone,
-        date: dbBooking.checkIn,
-        people: dbBooking.guests,
-        days: daysNum,
-        total: dbBooking.totalAmount,
-      },
-    })
-  } catch (error) {
-    console.error("Failed to create booking:", error)
-    return res.status(500).json({ message: "Failed to create booking" })
-  }
-})
-
-// 📄 GET BOOKINGS (WITH CAMP & USER DETAILS FROM POSTGRESQL)
-app.get("/api/bookings", async (_: Request, res: Response) => {
-  try {
-    const dbBookings = await findAllBookings()
-    const properties = await findAllProperties()
-    const propertiesMap = new Map(properties.map(p => [p.id, p]))
-
-    const fullBookings = await Promise.all(
-      dbBookings.map(async b => {
-        const user = await findUserById(b.userId)
+      const fullBookings = dbBookings.map((b: Booking) => {
         const property = propertiesMap.get(b.propertyId)
 
         const camp = property
@@ -292,8 +435,8 @@ app.get("/api/bookings", async (_: Request, res: Response) => {
 
         return {
           id: b.id,
-          name: user ? user.name : "Guest",
-          phone: user && user.phone ? user.phone : "",
+          name: user.name,
+          phone: user.phone || "",
           date: b.checkIn,
           people: b.guests,
           days,
@@ -301,36 +444,46 @@ app.get("/api/bookings", async (_: Request, res: Response) => {
           camp,
         }
       })
-    )
 
-    return res.json(fullBookings)
-  } catch (error) {
-    console.error("Failed to fetch bookings:", error)
-    return res.status(500).json({ message: "Failed to fetch bookings" })
-  }
-})
+      return res.json(fullBookings)
+    } catch (error) {
+      console.error("Failed to fetch bookings:", error)
+      return res.status(500).json({ message: "Failed to fetch bookings" })
+    }
+  },
+)
 
 // 🔴 DELETE BOOKING
-app.delete("/api/bookings/:id", async (req: Request, res: Response) => {
-  const id = Number(req.params.id)
+app.delete(
+  "/api/bookings/:id",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
 
-  if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ message: "Invalid booking ID" })
-  }
-
-  try {
-    const success = await deleteBooking(id)
-
-    if (!success) {
-      return res.status(404).json({ message: "Booking not found" })
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" })
     }
 
-    return res.json({ message: "Booking cancelled" })
-  } catch (error) {
-    console.error("Failed to delete booking:", error)
-    return res.status(500).json({ message: "Failed to cancel booking" })
-  }
-})
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid booking ID" })
+    }
+
+    try {
+      const success = await deleteBookingForUser(id, userId)
+
+      if (!success) {
+        return res.status(404).json({ message: "Booking not found" })
+      }
+
+      return res.json({ message: "Booking cancelled" })
+    } catch (error) {
+      console.error("Failed to delete booking:", error)
+      return res.status(500).json({ message: "Failed to cancel booking" })
+    }
+  },
+)
 
 /* =========================
    404 HANDLER
