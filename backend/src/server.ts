@@ -5,6 +5,11 @@ import { pool } from "./db"
 import {
   findAllProperties,
   findPropertyById,
+  findAllPropertiesForAdmin,
+  createProperty,
+  updateProperty,
+  UpdatePropertyInput,
+  setPropertyActive,
 } from "./modules/properties/property.repository"
 import {
   findUserById,
@@ -625,7 +630,7 @@ app.get(
       }
 
       const dbBookings = await findBookingsByUserId(userId)
-      const properties = await findAllProperties()
+      const properties = await findAllPropertiesForAdmin()
       const propertiesMap = new Map(properties.map(p => [p.id, p]))
 
       const fullBookings = dbBookings.map((b: Booking) => {
@@ -776,6 +781,278 @@ app.patch(
     } catch (error) {
       console.error("Failed to update booking status:", error)
       return res.status(500).json({ message: "Failed to update booking status" })
+    }
+  },
+)
+
+/* =========================
+   ADMIN PROPERTIES
+========================= */
+
+// 📦 GET ALL PROPERTIES (ADMIN)
+app.get(
+  "/api/admin/properties",
+  requireAuth,
+  requireAdmin,
+  async (_: Request, res: Response) => {
+    try {
+      const properties = await findAllPropertiesForAdmin()
+      return res.status(200).json(properties)
+    } catch (error) {
+      console.error("Failed to fetch admin properties:", error)
+      return res.status(500).json({ message: "Failed to fetch properties" })
+    }
+  },
+)
+
+// ➕ CREATE PROPERTY (ADMIN)
+app.post(
+  "/api/admin/properties",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const {
+      name,
+      description,
+      propertyType,
+      location,
+      pricePerNight,
+      rating,
+      imageUrl,
+    } = req.body
+
+    if (!name || typeof name !== "string" || name.trim() === "") {
+      return res.status(400).json({ message: "Name is required" })
+    }
+
+    if (
+      !propertyType ||
+      typeof propertyType !== "string" ||
+      propertyType.trim() === ""
+    ) {
+      return res.status(400).json({ message: "Property type is required" })
+    }
+
+    if (!location || typeof location !== "string" || location.trim() === "") {
+      return res.status(400).json({ message: "Location is required" })
+    }
+
+    if (
+      pricePerNight === undefined ||
+      pricePerNight === null ||
+      typeof pricePerNight !== "number" ||
+      isNaN(pricePerNight) ||
+      pricePerNight < 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Price per night must be a non-negative number" })
+    }
+
+    if (
+      rating !== undefined &&
+      rating !== null &&
+      (typeof rating !== "number" || isNaN(rating) || rating < 0 || rating > 5)
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Rating must be a number between 0 and 5" })
+    }
+
+    if (
+      description !== undefined &&
+      description !== null &&
+      typeof description !== "string"
+    ) {
+      return res.status(400).json({ message: "Description must be a string" })
+    }
+
+    if (
+      imageUrl !== undefined &&
+      imageUrl !== null &&
+      typeof imageUrl !== "string"
+    ) {
+      return res.status(400).json({ message: "Image URL must be a string" })
+    }
+
+    try {
+      const property = await createProperty({
+        name: name.trim(),
+        description:
+          typeof description === "string" ? description.trim() : null,
+        propertyType: propertyType.trim(),
+        location: location.trim(),
+        pricePerNight,
+        rating: rating !== undefined && rating !== null ? rating : undefined,
+        imageUrl: typeof imageUrl === "string" ? imageUrl.trim() : null,
+      })
+
+      return res.status(201).json({
+        message: "Property created",
+        property,
+      })
+    } catch (error) {
+      console.error("Failed to create property:", error)
+      return res.status(500).json({ message: "Failed to create property" })
+    }
+  },
+)
+
+// ✏️ UPDATE PROPERTY (ADMIN)
+app.patch(
+  "/api/admin/properties/:id",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid property ID" })
+    }
+
+    const {
+      name,
+      description,
+      propertyType,
+      location,
+      pricePerNight,
+      rating,
+      imageUrl,
+    } = req.body
+
+    if (
+      name === undefined &&
+      description === undefined &&
+      propertyType === undefined &&
+      location === undefined &&
+      pricePerNight === undefined &&
+      rating === undefined &&
+      imageUrl === undefined
+    ) {
+      return res
+        .status(400)
+        .json({ message: "At least one editable field must be provided" })
+    }
+
+    const updatePayload: UpdatePropertyInput = {}
+
+    if (name !== undefined) {
+      if (typeof name !== "string" || name.trim() === "") {
+        return res.status(400).json({ message: "Name must be a non-empty string" })
+      }
+      updatePayload.name = name.trim()
+    }
+
+    if (propertyType !== undefined) {
+      if (typeof propertyType !== "string" || propertyType.trim() === "") {
+        return res
+          .status(400)
+          .json({ message: "Property type must be a non-empty string" })
+      }
+      updatePayload.propertyType = propertyType.trim()
+    }
+
+    if (location !== undefined) {
+      if (typeof location !== "string" || location.trim() === "") {
+        return res
+          .status(400)
+          .json({ message: "Location must be a non-empty string" })
+      }
+      updatePayload.location = location.trim()
+    }
+
+    if (pricePerNight !== undefined) {
+      if (
+        typeof pricePerNight !== "number" ||
+        isNaN(pricePerNight) ||
+        pricePerNight < 0
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Price per night must be a non-negative number" })
+      }
+      updatePayload.pricePerNight = pricePerNight
+    }
+
+    if (rating !== undefined) {
+      if (
+        typeof rating !== "number" ||
+        isNaN(rating) ||
+        rating < 0 ||
+        rating > 5
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Rating must be a number between 0 and 5" })
+      }
+      updatePayload.rating = rating
+    }
+
+    if (description !== undefined) {
+      if (description !== null && typeof description !== "string") {
+        return res
+          .status(400)
+          .json({ message: "Description must be a string or null" })
+      }
+      updatePayload.description =
+        typeof description === "string" ? description.trim() : null
+    }
+
+    if (imageUrl !== undefined) {
+      if (imageUrl !== null && typeof imageUrl !== "string") {
+        return res
+          .status(400)
+          .json({ message: "Image URL must be a string or null" })
+      }
+      updatePayload.imageUrl =
+        typeof imageUrl === "string" ? imageUrl.trim() : null
+    }
+
+    try {
+      const property = await updateProperty(id, updatePayload)
+      if (!property) {
+        return res.status(404).json({ message: "Property not found" })
+      }
+
+      return res.status(200).json({
+        message: "Property updated",
+        property,
+      })
+    } catch (error) {
+      console.error("Failed to update property:", error)
+      return res.status(500).json({ message: "Failed to update property" })
+    }
+  },
+)
+
+// ⚡ ACTIVATE / DEACTIVATE PROPERTY (ADMIN)
+app.patch(
+  "/api/admin/properties/:id/status",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid property ID" })
+    }
+
+    const { isActive } = req.body
+    if (typeof isActive !== "boolean") {
+      return res.status(400).json({ message: "isActive must be a boolean" })
+    }
+
+    try {
+      const property = await setPropertyActive(id, isActive)
+      if (!property) {
+        return res.status(404).json({ message: "Property not found" })
+      }
+
+      return res.status(200).json({
+        message: isActive ? "Property activated" : "Property deactivated",
+        property,
+      })
+    } catch (error) {
+      console.error("Failed to update property status:", error)
+      return res.status(500).json({ message: "Failed to update property status" })
     }
   },
 )
