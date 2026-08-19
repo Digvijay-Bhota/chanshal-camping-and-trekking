@@ -25,6 +25,9 @@ import {
   findAllBookings,
   findBookingsByUserId,
   deleteBookingForUser,
+  findOverlappingBooking,
+  findRecentDuplicateBooking,
+  createBookingTransaction,
 } from "./modules/bookings/booking.repository"
 
 const app = express()
@@ -329,72 +332,166 @@ app.post(
     } = req.body
 
     const propId = Number(campId || propertyId)
-    if (!propId || isNaN(propId) || !name || !phone || (!date && !checkIn)) {
+    if (!propId || !Number.isInteger(propId) || propId <= 0) {
+      return res.status(400).json({ message: "Invalid camp/property ID" })
+    }
+
+    if (!name || typeof name !== "string" || name.trim() === "") {
       return res.status(400).json({ message: "Missing required fields" })
     }
 
+    if (!phone || typeof phone !== "string" || phone.trim() === "") {
+      return res.status(400).json({ message: "Missing required fields" })
+    }
+
+    const checkInInput = checkIn || date
+    if (!checkInInput || typeof checkInInput !== "string" || !checkInInput.trim()) {
+      return res.status(400).json({ message: "Missing required fields" })
+    }
+
+    const checkInStr = checkInInput.trim().split("T")[0]
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+    if (!dateRegex.test(checkInStr)) {
+      return res.status(400).json({ message: "Invalid check-in date" })
+    }
+
+    const [inYear, inMonth, inDay] = checkInStr.split("-").map(Number)
+    const inDateObj = new Date(inYear, inMonth - 1, inDay)
+    if (
+      isNaN(inDateObj.getTime()) ||
+      inDateObj.getFullYear() !== inYear ||
+      inDateObj.getMonth() !== inMonth - 1 ||
+      inDateObj.getDate() !== inDay
+    ) {
+      return res.status(400).json({ message: "Invalid check-in date" })
+    }
+
+    const now = new Date()
+    const todayYear = now.getFullYear()
+    const todayMonth = String(now.getMonth() + 1).padStart(2, "0")
+    const todayDay = String(now.getDate()).padStart(2, "0")
+    const todayStr = `${todayYear}-${todayMonth}-${todayDay}`
+
+    if (checkInStr < todayStr) {
+      return res
+        .status(400)
+        .json({ message: "Check-in date cannot be in the past" })
+    }
+
+    const rawGuests = guests !== undefined ? guests : people
+    if (rawGuests === undefined || rawGuests === null) {
+      return res
+        .status(400)
+        .json({ message: "Guests must be a positive integer" })
+    }
+    const guestsNum = Number(rawGuests)
+    if (!Number.isInteger(guestsNum) || guestsNum < 1) {
+      return res
+        .status(400)
+        .json({ message: "Guests must be a positive integer" })
+    }
+
+    if (days === undefined || days === null) {
+      return res
+        .status(400)
+        .json({ message: "Days must be a positive integer" })
+    }
+    const daysNum = Number(days)
+    if (!Number.isInteger(daysNum) || daysNum < 1) {
+      return res
+        .status(400)
+        .json({ message: "Days must be a positive integer" })
+    }
+
+    let checkOutStr = ""
+    if (checkOut !== undefined && checkOut !== null && String(checkOut).trim() !== "") {
+      const rawOutStr = String(checkOut).trim().split("T")[0]
+      if (!dateRegex.test(rawOutStr)) {
+        return res.status(400).json({ message: "Invalid check-out date" })
+      }
+
+      const [outYear, outMonth, outDay] = rawOutStr.split("-").map(Number)
+      const outDateObj = new Date(outYear, outMonth - 1, outDay)
+      if (
+        isNaN(outDateObj.getTime()) ||
+        outDateObj.getFullYear() !== outYear ||
+        outDateObj.getMonth() !== outMonth - 1 ||
+        outDateObj.getDate() !== outDay
+      ) {
+        return res.status(400).json({ message: "Invalid check-out date" })
+      }
+
+      if (rawOutStr <= checkInStr) {
+        return res
+          .status(400)
+          .json({ message: "Check-out date must be after check-in date" })
+      }
+
+      checkOutStr = rawOutStr
+    } else {
+      const inDate = new Date(inYear, inMonth - 1, inDay)
+      inDate.setDate(inDate.getDate() + daysNum)
+      const outYear = inDate.getFullYear()
+      const outMonth = String(inDate.getMonth() + 1).padStart(2, "0")
+      const outDay = String(inDate.getDate()).padStart(2, "0")
+      checkOutStr = `${outYear}-${outMonth}-${outDay}`
+    }
+
     try {
-      let user = await findUserById(userId)
-      if (!user) {
-        return res.status(404).json({ message: "User not found" })
-      }
-
-      const trimmedPhone =
-        typeof phone === "string" && phone.trim() ? phone.trim() : null
-      if (trimmedPhone && trimmedPhone !== user.phone) {
-        const updatedUser = await updateUserPhone(userId, trimmedPhone)
-        if (updatedUser) {
-          user = updatedUser
-        }
-      }
-
       const property = await findPropertyById(propId)
       if (!property) {
         return res.status(404).json({ message: "Camp not found" })
       }
 
-      const guestsNum = Number(guests || people || 1)
-      const daysNum = Math.max(1, Number(days || 1))
-      const checkInStr = (checkIn || date).toString().split("T")[0]
-
-      let checkOutStr = (checkOut || "").toString().split("T")[0]
-      if (!checkOutStr) {
-        const parts = checkInStr.split("-").map(Number)
-        if (parts.length !== 3 || parts.some((p: number) => isNaN(p))) {
-          return res.status(400).json({ message: "Invalid check-in date" })
-        }
-        const [year, month, day] = parts
-        const inDate = new Date(year, month - 1, day)
-        if (isNaN(inDate.getTime())) {
-          return res.status(400).json({ message: "Invalid check-in date" })
-        }
-        inDate.setDate(inDate.getDate() + daysNum)
-        const outYear = inDate.getFullYear()
-        const outMonth = String(inDate.getMonth() + 1).padStart(2, "0")
-        const outDay = String(inDate.getDate()).padStart(2, "0")
-        checkOutStr = `${outYear}-${outMonth}-${outDay}`
-      }
-
-      // Calculate total on the server only: property.pricePerNight * guests * days
       const totalAmount = property.pricePerNight * guestsNum * daysNum
 
-      const dbBooking = await createBooking({
-        userId: user.id,
-        propertyId: property.id,
+      const duplicateBooking = await findRecentDuplicateBooking(
+        userId,
+        property.id,
+        checkInStr,
+        checkOutStr,
+        guestsNum,
+        totalAmount,
+      )
+      if (duplicateBooking) {
+        return res
+          .status(409)
+          .json({ message: "Duplicate booking submission" })
+      }
+
+      const result = await createBookingTransaction({
+        userId,
+        propertyId: propId,
+        phone,
         checkIn: checkInStr,
         checkOut: checkOutStr,
         guests: guestsNum,
-        totalAmount,
-        status: "pending",
+        days: daysNum,
       })
+
+      if (result.status === "user_not_found") {
+        return res.status(404).json({ message: "User not found" })
+      }
+
+      if (result.status === "camp_not_found") {
+        return res.status(404).json({ message: "Camp not found" })
+      }
+
+      if (result.status === "overlap") {
+        return res
+          .status(409)
+          .json({ message: "Property is already booked for the selected dates" })
+      }
+
+      const dbBooking = result.booking
 
       return res.status(201).json({
         message: "Booking saved",
         booking: {
           id: dbBooking.id,
           campId: dbBooking.propertyId,
-          name,
-          phone,
+          name: name.trim(),
+          phone: phone.trim(),
           date: dbBooking.checkIn,
           people: dbBooking.guests,
           days: daysNum,

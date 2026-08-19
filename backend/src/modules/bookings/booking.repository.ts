@@ -206,3 +206,217 @@ export async function deleteBookingForUser(
 
   return (result.rowCount ?? 0) > 0
 }
+
+export async function findOverlappingBooking(
+  propertyId: number,
+  checkIn: string,
+  checkOut: string,
+): Promise<Booking | null> {
+  const result = await pool.query<BookingRow>(
+    `
+      SELECT
+        id,
+        user_id,
+        property_id,
+        check_in,
+        check_out,
+        guests,
+        total_amount,
+        status,
+        created_at,
+        updated_at
+      FROM bookings
+      WHERE property_id = $1
+        AND status != 'cancelled'
+        AND check_in < $3
+        AND check_out > $2
+      LIMIT 1
+    `,
+    [propertyId, checkIn, checkOut],
+  )
+
+  if (result.rows.length === 0) {
+    return null
+  }
+
+  return mapRowToBooking(result.rows[0])
+}
+
+export async function findRecentDuplicateBooking(
+  userId: number,
+  propertyId: number,
+  checkIn: string,
+  checkOut: string,
+  guests: number,
+  totalAmount: number,
+): Promise<Booking | null> {
+  const result = await pool.query<BookingRow>(
+    `
+      SELECT
+        id,
+        user_id,
+        property_id,
+        check_in,
+        check_out,
+        guests,
+        total_amount,
+        status,
+        created_at,
+        updated_at
+      FROM bookings
+      WHERE user_id = $1
+        AND property_id = $2
+        AND check_in = $3
+        AND check_out = $4
+        AND guests = $5
+        AND total_amount = $6
+        AND status != 'cancelled'
+        AND created_at >= NOW() - INTERVAL '10 minutes'
+      LIMIT 1
+    `,
+    [userId, propertyId, checkIn, checkOut, guests, totalAmount],
+  )
+
+  if (result.rows.length === 0) {
+    return null
+  }
+
+  return mapRowToBooking(result.rows[0])
+}
+
+export type CreateBookingTransactionInput = {
+  userId: number
+  propertyId: number
+  phone: string
+  checkIn: string
+  checkOut: string
+  guests: number
+  days: number
+}
+
+export type CreateBookingTransactionResult =
+  | { status: "success"; booking: Booking }
+  | { status: "user_not_found" }
+  | { status: "camp_not_found" }
+  | { status: "overlap" }
+
+export async function createBookingTransaction(
+  input: CreateBookingTransactionInput,
+): Promise<CreateBookingTransactionResult> {
+  const client = await pool.connect()
+
+  try {
+    await client.query("BEGIN")
+
+    // 1. Check user exists
+    const userRes = await client.query(
+      `
+        SELECT id, phone
+        FROM users
+        WHERE id = $1
+      `,
+      [input.userId],
+    )
+    if (userRes.rows.length === 0) {
+      await client.query("ROLLBACK")
+      return { status: "user_not_found" }
+    }
+    const userRow = userRes.rows[0]
+
+    // 2. Update user phone if needed
+    const trimmedPhone = input.phone.trim()
+    if (trimmedPhone && trimmedPhone !== userRow.phone) {
+      await client.query(
+        `
+          UPDATE users
+          SET phone = $2, updated_at = NOW()
+          WHERE id = $1
+        `,
+        [input.userId, trimmedPhone],
+      )
+    }
+
+    // 3. Check property exists
+    const propRes = await client.query(
+      `
+        SELECT id, price_per_night
+        FROM properties
+        WHERE id = $1
+      `,
+      [input.propertyId],
+    )
+    if (propRes.rows.length === 0) {
+      await client.query("ROLLBACK")
+      return { status: "camp_not_found" }
+    }
+    const pricePerNight = Number(propRes.rows[0].price_per_night)
+
+    // 4. Overlap check
+    const overlapRes = await client.query<BookingRow>(
+      `
+        SELECT id
+        FROM bookings
+        WHERE property_id = $1
+          AND status != 'cancelled'
+          AND check_in < $3
+          AND check_out > $2
+        LIMIT 1
+      `,
+      [input.propertyId, input.checkIn, input.checkOut],
+    )
+    if (overlapRes.rows.length > 0) {
+      await client.query("ROLLBACK")
+      return { status: "overlap" }
+    }
+
+    // 5. Booking INSERT
+    const totalAmount = pricePerNight * input.guests * input.days
+
+    const insertRes = await client.query<BookingRow>(
+      `
+        INSERT INTO bookings (
+          user_id,
+          property_id,
+          check_in,
+          check_out,
+          guests,
+          total_amount,
+          status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING
+          id,
+          user_id,
+          property_id,
+          check_in,
+          check_out,
+          guests,
+          total_amount,
+          status,
+          created_at,
+          updated_at
+      `,
+      [
+        input.userId,
+        input.propertyId,
+        input.checkIn,
+        input.checkOut,
+        input.guests,
+        totalAmount,
+        "pending",
+      ],
+    )
+
+    await client.query("COMMIT")
+    return {
+      status: "success",
+      booking: mapRowToBooking(insertRes.rows[0]),
+    }
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
