@@ -13,6 +13,7 @@ import MyBookings from "./pages/MyBookings"
 import Login from "./pages/Login"
 import AdminDashboard from "./pages/AdminDashboard"
 import AdminProperties from "./pages/AdminProperties"
+import PaymentSuccess from "./pages/PaymentSuccess"
 
 /* ================= SCROLL TO TOP ================= */
 
@@ -66,6 +67,18 @@ function App() {
               <ProtectedRoute>
                 <PageWrapper>
                   <MyBookings />
+                </PageWrapper>
+              </ProtectedRoute>
+            }
+          />
+
+          {/* 🎉 PAYMENT SUCCESS / RECEIPT */}
+          <Route
+            path="/booking/success/:bookingId"
+            element={
+              <ProtectedRoute>
+                <PageWrapper>
+                  <PaymentSuccess />
                 </PageWrapper>
               </ProtectedRoute>
             }

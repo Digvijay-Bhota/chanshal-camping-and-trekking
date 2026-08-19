@@ -25,6 +25,60 @@ const contentVariants = {
   },
 }
 
+/* RAZORPAY TYPES */
+interface RazorpaySuccessResponse {
+  razorpay_payment_id: string
+  razorpay_order_id: string
+  razorpay_signature: string
+}
+
+interface RazorpayOptions {
+  key: string
+  amount: number
+  currency: string
+  name: string
+  description?: string
+  image?: string
+  order_id: string
+  handler: (response: RazorpaySuccessResponse) => void
+  prefill?: {
+    name?: string
+    email?: string
+    contact?: string
+  }
+  notes?: Record<string, string>
+  theme?: {
+    color?: string
+  }
+  modal?: {
+    ondismiss?: () => void
+  }
+}
+
+interface RazorpayInstance {
+  open: () => void
+}
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayOptions) => RazorpayInstance
+  }
+}
+
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise(resolve => {
+    if (window.Razorpay) {
+      resolve(true)
+      return
+    }
+    const script = document.createElement("script")
+    script.src = "https://checkout.razorpay.com/v1/checkout.js"
+    script.onload = () => resolve(true)
+    script.onerror = () => resolve(false)
+    document.body.appendChild(script)
+  })
+}
+
 function Booking() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -152,6 +206,7 @@ function Booking() {
     setSubmitting(true)
 
     try {
+      // 1. Create Booking
       const res = await fetch(`${API}/api/bookings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -165,15 +220,105 @@ function Booking() {
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.message || "Booking failed")
+        throw new Error(errorData.message || "Booking creation failed")
       }
 
-      toast.success("Booking successful 🎉")
-      navigate("/my-bookings")
+      const bookingData = await res.json()
+      const newBookingId = bookingData.booking?.id
+
+      if (!newBookingId) {
+        throw new Error("Invalid booking response from server")
+      }
+
+      // 2. Create Razorpay Payment Order
+      const orderRes = await fetch(`${API}/api/payments/create-order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ bookingId: newBookingId }),
+      })
+
+      if (!orderRes.ok) {
+        const orderError = await orderRes.json().catch(() => ({}))
+        toast.error(orderError.message || "Booking created, but payment initialization failed.")
+        navigate("/my-bookings")
+        return
+      }
+
+      const orderData = await orderRes.json()
+
+      // 3. Load Razorpay Script
+      const scriptLoaded = await loadRazorpayScript()
+      if (!scriptLoaded || !window.Razorpay) {
+        toast.error("Razorpay SDK failed to load. Please complete payment in My Bookings.")
+        navigate("/my-bookings")
+        return
+      }
+
+      // 4. Open Razorpay Checkout Modal
+      const options: RazorpayOptions = {
+        key: orderData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: camp.name,
+        description: `Booking #${newBookingId} - ${camp.name}`,
+        image: camp.image,
+        order_id: orderData.orderId,
+        prefill: {
+          name: form.name,
+          email: user.email || "",
+          contact: form.phone,
+        },
+        notes: {
+          bookingId: String(newBookingId),
+        },
+        theme: {
+          color: "#22c55e",
+        },
+        handler: async (response: RazorpaySuccessResponse) => {
+          try {
+            const verifyRes = await fetch(`${API}/api/payments/verify`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({
+                bookingId: newBookingId,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            })
+
+            const verifyData = await verifyRes.json().catch(() => ({}))
+
+            if (verifyRes.ok) {
+              toast.success("Payment successful & booking confirmed! 🎉")
+              navigate(`/booking/success/${newBookingId}`)
+            } else {
+              toast.error(verifyData.message || "Payment verification failed")
+              navigate("/my-bookings")
+            }
+          } catch {
+            toast.error("Network error during payment verification")
+            navigate("/my-bookings")
+          } finally {
+            setSubmitting(false)
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            toast.error("Checkout closed. You can complete payment anytime in My Bookings.")
+            setSubmitting(false)
+            navigate("/my-bookings")
+          },
+        },
+      }
+
+      const rzp = new window.Razorpay(options)
+      rzp.open()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Booking failed"
       toast.error(message)
-    } finally {
       setSubmitting(false)
     }
   }
@@ -345,9 +490,9 @@ function Booking() {
             <button
               onClick={handleSubmit}
               disabled={isSubmitDisabled}
-              className="w-full mt-3 bg-green-500 py-3 rounded text-lg hover:bg-green-600 transition disabled:opacity-50"
+              className="w-full mt-3 bg-green-500 py-3 rounded text-lg hover:bg-green-600 transition disabled:opacity-50 font-semibold"
             >
-              {submitting ? "Processing..." : "Confirm Booking"}
+              {submitting ? "Initializing Payment..." : "Proceed to Payment 💳"}
             </button>
 
           </div>

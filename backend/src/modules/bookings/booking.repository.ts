@@ -9,6 +9,7 @@ export type Booking = {
   guests: number
   totalAmount: number
   status: string
+  paymentStatus: string
   createdAt?: Date
   updatedAt?: Date
 }
@@ -32,6 +33,7 @@ export type BookingRow = {
   guests: number | string
   total_amount: number | string
   status: string
+  payment_status: string
   created_at?: Date | string | null
   updated_at?: Date | string | null
 }
@@ -59,6 +61,7 @@ function mapRowToBooking(row: BookingRow): Booking {
     guests: Number(row.guests),
     totalAmount: Number(row.total_amount),
     status: row.status,
+    paymentStatus: row.payment_status || "unpaid",
     createdAt: row.created_at ? new Date(row.created_at) : undefined,
     updatedAt: row.updated_at ? new Date(row.updated_at) : undefined,
   }
@@ -84,9 +87,10 @@ export async function createBooking(
         check_out,
         guests,
         total_amount,
-        status
+        status,
+        payment_status
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'unpaid')
       RETURNING
         id,
         user_id,
@@ -96,6 +100,7 @@ export async function createBooking(
         guests,
         total_amount,
         status,
+        payment_status,
         created_at,
         updated_at
     `,
@@ -116,6 +121,7 @@ export async function findAllBookings(): Promise<Booking[]> {
       guests,
       total_amount,
       status,
+      payment_status,
       created_at,
       updated_at
     FROM bookings
@@ -139,6 +145,7 @@ export async function findBookingById(
         guests,
         total_amount,
         status,
+        payment_status,
         created_at,
         updated_at
       FROM bookings
@@ -180,6 +187,7 @@ export async function findBookingsByUserId(
         guests,
         total_amount,
         status,
+        payment_status,
         created_at,
         updated_at
       FROM bookings
@@ -242,6 +250,7 @@ export async function findOverlappingBooking(
         guests,
         total_amount,
         status,
+        payment_status,
         created_at,
         updated_at
       FROM bookings
@@ -280,6 +289,7 @@ export async function findRecentDuplicateBooking(
         guests,
         total_amount,
         status,
+        payment_status,
         created_at,
         updated_at
       FROM bookings
@@ -400,9 +410,10 @@ export async function createBookingTransaction(
           check_out,
           guests,
           total_amount,
-          status
+          status,
+          payment_status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'unpaid')
         RETURNING
           id,
           user_id,
@@ -412,6 +423,7 @@ export async function createBookingTransaction(
           guests,
           total_amount,
           status,
+          payment_status,
           created_at,
           updated_at
       `,
@@ -448,6 +460,7 @@ export type AdminBooking = {
   guests: number
   totalAmount: number
   status: string
+  paymentStatus: string
   createdAt?: Date
   updatedAt?: Date
   user: {
@@ -475,6 +488,7 @@ export type AdminBookingRow = {
   guests: number | string
   total_amount: number | string
   status: string
+  payment_status: string
   created_at?: Date | string | null
   updated_at?: Date | string | null
   user_name: string
@@ -497,6 +511,7 @@ function mapRowToAdminBooking(row: AdminBookingRow): AdminBooking {
     guests: Number(row.guests),
     totalAmount: Number(row.total_amount),
     status: row.status,
+    paymentStatus: row.payment_status || "unpaid",
     createdAt: row.created_at ? new Date(row.created_at) : undefined,
     updatedAt: row.updated_at ? new Date(row.updated_at) : undefined,
     user: {
@@ -527,6 +542,7 @@ export async function findAllBookingsWithDetails(): Promise<AdminBooking[]> {
       b.guests,
       b.total_amount,
       b.status,
+      b.payment_status,
       b.created_at,
       b.updated_at,
       u.name AS user_name,
@@ -567,6 +583,7 @@ export async function updateBookingStatus(
         guests,
         total_amount,
         status,
+        payment_status,
         created_at,
         updated_at
     `,

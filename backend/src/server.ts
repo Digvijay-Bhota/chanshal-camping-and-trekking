@@ -2,6 +2,7 @@ import express, { Request, Response } from "express"
 import cors from "cors"
 import cookieParser from "cookie-parser"
 import { pool } from "./db"
+import Razorpay from "razorpay"
 import {
   findAllProperties,
   findPropertyById,
@@ -11,6 +12,13 @@ import {
   UpdatePropertyInput,
   setPropertyActive,
 } from "./modules/properties/property.repository"
+import crypto from "crypto"
+import {
+  createPaymentRecord,
+  findPaymentByOrderId,
+  capturePaymentAndConfirmBooking,
+  markPaymentFailed,
+} from "./modules/payments/payment.repository"
 import {
   findUserById,
   findUserByEmail,
@@ -49,6 +57,176 @@ app.use(
     credentials: true,
   }),
 )
+
+// ⚡ RAZORPAY WEBHOOK ROUTE (RAW BODY PARSER FOR SIGNATURE VERIFICATION)
+app.post(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" }),
+  async (req: Request, res: Response) => {
+    const signature = req.headers["x-razorpay-signature"]
+    if (!signature || typeof signature !== "string" || signature.trim() === "") {
+      return res.status(400).json({ message: "Missing webhook signature" })
+    }
+
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET
+    if (!webhookSecret || !webhookSecret.trim()) {
+      console.error("RAZORPAY_WEBHOOK_SECRET is not configured")
+      return res.status(500).json({ message: "Webhook configuration error" })
+    }
+
+    const rawBody = req.body
+    if (!Buffer.isBuffer(rawBody)) {
+      return res.status(400).json({ message: "Invalid raw request body" })
+    }
+
+    // 1. Signature Verification using HMAC-SHA256 & timing-safe comparison
+    const expectedSignature = crypto
+      .createHmac("sha256", webhookSecret.trim())
+      .update(rawBody)
+      .digest("hex")
+
+    const sigBuffer = Buffer.from(signature.trim())
+    const expBuffer = Buffer.from(expectedSignature)
+
+    const isValid =
+      sigBuffer.length === expBuffer.length &&
+      crypto.timingSafeEqual(sigBuffer, expBuffer)
+
+    if (!isValid) {
+      return res.status(400).json({ message: "Invalid webhook signature" })
+    }
+
+    // 2. Parse JSON Payload
+    let eventData: { event?: string; payload?: Record<string, any> }
+    try {
+      eventData = JSON.parse(rawBody.toString("utf-8"))
+    } catch {
+      return res.status(400).json({ message: "Malformed JSON payload" })
+    }
+
+    const { event, payload } = eventData
+    if (!event || !payload) {
+      return res.status(400).json({ message: "Invalid event payload structure" })
+    }
+
+    try {
+      if (event === "payment.captured") {
+        const paymentEntity = payload.payment?.entity
+        if (!paymentEntity) {
+          return res.status(400).json({ message: "Missing payment entity in payload" })
+        }
+
+        const razorpayPaymentId = String(paymentEntity.id || "")
+        const razorpayOrderId = String(paymentEntity.order_id || "")
+        const amount = Number(paymentEntity.amount)
+        const currency = String(paymentEntity.currency || "")
+
+        if (!razorpayOrderId) {
+          return res.status(400).json({ message: "Missing order_id in payment entity" })
+        }
+
+        const paymentRecord = await findPaymentByOrderId(razorpayOrderId)
+        if (!paymentRecord) {
+          return res.status(404).json({ message: "Payment order not found" })
+        }
+
+        // Idempotency check
+        if (paymentRecord.status === "captured") {
+          return res.status(200).json({ message: "Payment already captured" })
+        }
+
+        // Verify amount & currency match stored order
+        const expectedAmountInPaise = Math.round(paymentRecord.amount * 100)
+        if (amount !== expectedAmountInPaise || currency !== paymentRecord.currency) {
+          return res.status(400).json({ message: "Payment amount or currency mismatch" })
+        }
+
+        await capturePaymentAndConfirmBooking(
+          paymentRecord.id,
+          paymentRecord.bookingId,
+          razorpayPaymentId,
+          signature.trim(),
+        )
+
+        return res.status(200).json({ message: "Payment captured successfully" })
+      }
+
+      if (event === "payment.failed") {
+        const paymentEntity = payload.payment?.entity
+        if (!paymentEntity) {
+          return res.status(400).json({ message: "Missing payment entity in payload" })
+        }
+
+        const razorpayOrderId = String(paymentEntity.order_id || "")
+        const errorMessage =
+          String(paymentEntity.error_description || paymentEntity.error_reason || "Payment failed")
+
+        if (!razorpayOrderId) {
+          return res.status(400).json({ message: "Missing order_id in payment entity" })
+        }
+
+        const paymentRecord = await findPaymentByOrderId(razorpayOrderId)
+        if (!paymentRecord) {
+          return res.status(404).json({ message: "Payment order not found" })
+        }
+
+        if (paymentRecord.status === "captured") {
+          return res.status(200).json({ message: "Payment already captured" })
+        }
+
+        await markPaymentFailed(paymentRecord.id, errorMessage)
+        return res.status(200).json({ message: "Payment failure recorded" })
+      }
+
+      if (event === "order.paid") {
+        const orderEntity = payload.order?.entity
+        if (!orderEntity) {
+          return res.status(400).json({ message: "Missing order entity in payload" })
+        }
+
+        const razorpayOrderId = String(orderEntity.id || "")
+        const amount = Number(orderEntity.amount)
+        const currency = String(orderEntity.currency || "")
+
+        if (!razorpayOrderId) {
+          return res.status(400).json({ message: "Missing order_id in payload" })
+        }
+
+        const paymentRecord = await findPaymentByOrderId(razorpayOrderId)
+        if (!paymentRecord) {
+          return res.status(404).json({ message: "Payment order not found" })
+        }
+
+        // Idempotency check
+        if (paymentRecord.status === "captured") {
+          return res.status(200).json({ message: "Order already paid and captured" })
+        }
+
+        // Verify amount & currency
+        const expectedAmountInPaise = Math.round(paymentRecord.amount * 100)
+        if (amount !== expectedAmountInPaise || currency !== paymentRecord.currency) {
+          return res.status(400).json({ message: "Payment amount or currency mismatch" })
+        }
+
+        await capturePaymentAndConfirmBooking(
+          paymentRecord.id,
+          paymentRecord.bookingId,
+          paymentRecord.providerPaymentId || "webhook_order_paid",
+          signature.trim(),
+        )
+
+        return res.status(200).json({ message: "Order paid successfully" })
+      }
+
+      // Return 200 for unknown / unhandled valid events
+      return res.status(200).json({ message: "Webhook event received and ignored" })
+    } catch (error) {
+      console.error("Failed to process Razorpay webhook:", error)
+      return res.status(500).json({ message: "Webhook processing failed" })
+    }
+  },
+)
+
 app.use(express.json())
 app.use(cookieParser())
 
@@ -660,6 +838,7 @@ app.get(
           days,
           total: b.totalAmount,
           status: b.status,
+          paymentStatus: b.paymentStatus,
           camp,
         }
       })
@@ -1053,6 +1232,251 @@ app.patch(
     } catch (error) {
       console.error("Failed to update property status:", error)
       return res.status(500).json({ message: "Failed to update property status" })
+    }
+  },
+)
+
+/* =========================
+   PAYMENTS
+========================= */
+
+function getRazorpayInstance(): Razorpay {
+  const keyId = process.env.RAZORPAY_KEY_ID
+  const keySecret = process.env.RAZORPAY_KEY_SECRET
+
+  if (!keyId || !keyId.trim() || !keySecret || !keySecret.trim()) {
+    throw new Error("Razorpay environment variables missing")
+  }
+
+  return new Razorpay({
+    key_id: keyId.trim(),
+    key_secret: keySecret.trim(),
+  })
+}
+
+// 💳 CREATE PAYMENT ORDER (RAZORPAY)
+app.post(
+  "/api/payments/create-order",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
+
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" })
+    }
+
+    const { bookingId } = req.body
+    const parsedBookingId = Number(bookingId)
+
+    if (
+      bookingId === undefined ||
+      bookingId === null ||
+      !Number.isInteger(parsedBookingId) ||
+      parsedBookingId <= 0
+    ) {
+      return res.status(400).json({ message: "Invalid booking ID" })
+    }
+
+    try {
+      const booking = await findBookingById(parsedBookingId)
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" })
+      }
+
+      if (booking.userId !== userId) {
+        return res
+          .status(403)
+          .json({ message: "Booking does not belong to authenticated user" })
+      }
+
+      if (booking.status !== "pending") {
+        return res
+          .status(400)
+          .json({ message: "Booking status is not pending" })
+      }
+
+      const paymentStatusRes = await pool.query<{ payment_status: string }>(
+        `SELECT payment_status FROM bookings WHERE id = $1`,
+        [parsedBookingId],
+      )
+      const paymentStatus =
+        paymentStatusRes.rows[0]?.payment_status || "unpaid"
+
+      if (paymentStatus !== "unpaid") {
+        return res
+          .status(400)
+          .json({ message: "Booking is already paid or processing" })
+      }
+
+      if (
+        typeof booking.totalAmount !== "number" ||
+        isNaN(booking.totalAmount) ||
+        booking.totalAmount <= 0
+      ) {
+        return res.status(400).json({ message: "Invalid booking total amount" })
+      }
+
+      const amountInPaise = Math.round(booking.totalAmount * 100)
+      const receipt = `booking_${booking.id}`
+
+      const razorpay = getRazorpayInstance()
+      const rzpOrder = await razorpay.orders.create({
+        amount: amountInPaise,
+        currency: "INR",
+        receipt,
+        notes: {
+          bookingId: String(booking.id),
+          userId: String(userId),
+        },
+      })
+
+      await createPaymentRecord({
+        bookingId: booking.id,
+        userId,
+        provider: "razorpay",
+        providerOrderId: rzpOrder.id,
+        amount: booking.totalAmount,
+        currency: "INR",
+        status: "created",
+      })
+
+      return res.status(200).json({
+        orderId: rzpOrder.id,
+        amount: amountInPaise,
+        currency: "INR",
+        keyId: process.env.RAZORPAY_KEY_ID,
+      })
+    } catch (error) {
+      console.error("Failed to create Razorpay payment order:", error)
+      return res
+        .status(500)
+        .json({ message: "Payment order creation failed" })
+    }
+  },
+)
+
+// 🔐 VERIFY PAYMENT SIGNATURE (RAZORPAY)
+app.post(
+  "/api/payments/verify",
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
+
+    if (!userId || !Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({ message: "Unauthorized" })
+    }
+
+    const {
+      bookingId,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    } = req.body
+
+    const parsedBookingId = Number(bookingId)
+
+    if (
+      bookingId === undefined ||
+      bookingId === null ||
+      !Number.isInteger(parsedBookingId) ||
+      parsedBookingId <= 0
+    ) {
+      return res.status(400).json({ message: "Invalid booking ID" })
+    }
+
+    if (
+      !razorpay_order_id ||
+      typeof razorpay_order_id !== "string" ||
+      razorpay_order_id.trim() === "" ||
+      !razorpay_payment_id ||
+      typeof razorpay_payment_id !== "string" ||
+      razorpay_payment_id.trim() === "" ||
+      !razorpay_signature ||
+      typeof razorpay_signature !== "string" ||
+      razorpay_signature.trim() === ""
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Missing or invalid payment parameters" })
+    }
+
+    try {
+      const booking = await findBookingById(parsedBookingId)
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" })
+      }
+
+      if (booking.userId !== userId) {
+        return res
+          .status(403)
+          .json({ message: "Booking does not belong to authenticated user" })
+      }
+
+      const paymentRecord = await findPaymentByOrderId(razorpay_order_id.trim())
+      if (!paymentRecord) {
+        return res.status(404).json({ message: "Payment order not found" })
+      }
+
+      if (paymentRecord.bookingId !== parsedBookingId) {
+        return res
+          .status(400)
+          .json({ message: "Payment order does not match booking" })
+      }
+
+      // Idempotency check: If payment already captured / booking already paid
+      if (paymentRecord.status === "captured") {
+        return res.status(200).json({
+          message: "Payment verified",
+          bookingId: parsedBookingId,
+          paymentStatus: "paid",
+          bookingStatus: "confirmed",
+        })
+      }
+
+      const keySecret = process.env.RAZORPAY_KEY_SECRET
+      if (!keySecret || !keySecret.trim()) {
+        return res
+          .status(500)
+          .json({ message: "Payment verification configuration error" })
+      }
+
+      // Signature Verification using HMAC SHA256 & timing-safe comparison
+      const text = `${razorpay_order_id.trim()}|${razorpay_payment_id.trim()}`
+      const generatedSignature = crypto
+        .createHmac("sha256", keySecret.trim())
+        .update(text)
+        .digest("hex")
+
+      const sigBuffer = Buffer.from(razorpay_signature.trim())
+      const genBuffer = Buffer.from(generatedSignature)
+
+      const isValid =
+        sigBuffer.length === genBuffer.length &&
+        crypto.timingSafeEqual(sigBuffer, genBuffer)
+
+      if (!isValid) {
+        return res.status(400).json({ message: "Invalid payment signature" })
+      }
+
+      // Atomic update of payments and bookings tables
+      await capturePaymentAndConfirmBooking(
+        paymentRecord.id,
+        parsedBookingId,
+        razorpay_payment_id.trim(),
+        razorpay_signature.trim(),
+      )
+
+      return res.status(200).json({
+        message: "Payment verified",
+        bookingId: parsedBookingId,
+        paymentStatus: "paid",
+        bookingStatus: "confirmed",
+      })
+    } catch (error) {
+      console.error("Failed to verify payment signature:", error)
+      return res.status(500).json({ message: "Payment verification failed" })
     }
   },
 )

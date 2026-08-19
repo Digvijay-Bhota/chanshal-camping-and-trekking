@@ -11,6 +11,7 @@ export interface AdminBooking {
   guests: number
   totalAmount: number
   status: string
+  paymentStatus?: string
   createdAt?: string
   updatedAt?: string
   user: {
@@ -266,7 +267,8 @@ function AdminDashboard() {
                     <th className="py-3.5 px-4">Dates</th>
                     <th className="py-3.5 px-4">Guests</th>
                     <th className="py-3.5 px-4">Total</th>
-                    <th className="py-3.5 px-4">Status</th>
+                    <th className="py-3.5 px-4">Reservation</th>
+                    <th className="py-3.5 px-4">Payment</th>
                     <th className="py-3.5 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -328,9 +330,22 @@ function AdminDashboard() {
                           ₹{b.totalAmount}
                         </td>
 
-                        {/* STATUS */}
+                        {/* RESERVATION STATUS */}
                         <td className="py-4 px-4">
                           {getStatusBadge(b.status)}
+                        </td>
+
+                        {/* PAYMENT STATUS */}
+                        <td className="py-4 px-4">
+                          {b.paymentStatus === "paid" ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                              <CheckCircle size={12} /> Paid ✅
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                              <Clock size={12} /> Unpaid ⏳
+                            </span>
+                          )}
                         </td>
 
                         {/* ACTIONS */}
