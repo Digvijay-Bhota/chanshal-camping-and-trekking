@@ -145,6 +145,15 @@ function Navbar() {
             </button>
           )}
 
+          {isAuthenticated && user?.role === "admin" && (
+            <button
+              onClick={() => navigate("/admin/bookings")}
+              className={linkStyle("/admin/bookings")}
+            >
+              Admin Dashboard
+            </button>
+          )}
+
           {/* THEME */}
           <button
             onClick={toggleTheme}
@@ -168,6 +177,15 @@ function Navbar() {
                 {isAuthenticated && user ? (
                   <>
                     <p className="mb-2 font-semibold">{user.name}</p>
+
+                    {user.role === "admin" && (
+                      <button
+                        onClick={() => navigate("/admin/bookings")}
+                        className="block w-full text-left hover:text-green-500 mb-2"
+                      >
+                        Admin Dashboard
+                      </button>
+                    )}
 
                     <button
                       onClick={() => navigate("/my-bookings")}
@@ -215,6 +233,12 @@ function Navbar() {
           {isAuthenticated && (
             <button onClick={() => navigate("/my-bookings")}>
               My Bookings
+            </button>
+          )}
+
+          {isAuthenticated && user?.role === "admin" && (
+            <button onClick={() => navigate("/admin/bookings")}>
+              Admin Dashboard
             </button>
           )}
 

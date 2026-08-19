@@ -6,6 +6,7 @@ export interface User {
   name: string
   email: string | null
   phone: string | null
+  role: string
 }
 
 export interface AuthContextType {

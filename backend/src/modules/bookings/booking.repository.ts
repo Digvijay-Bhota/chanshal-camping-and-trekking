@@ -439,3 +439,144 @@ export async function createBookingTransaction(
   }
 }
 
+export type AdminBooking = {
+  id: number
+  userId: number
+  propertyId: number
+  checkIn: string
+  checkOut: string
+  guests: number
+  totalAmount: number
+  status: string
+  createdAt?: Date
+  updatedAt?: Date
+  user: {
+    id: number
+    name: string
+    email: string | null
+    phone: string | null
+  }
+  camp: {
+    id: number
+    name: string
+    location: string
+    price: number
+    rating: number
+    image: string | null
+  }
+}
+
+export type AdminBookingRow = {
+  id: number | string
+  user_id: number | string
+  property_id: number | string
+  check_in: string | Date
+  check_out: string | Date
+  guests: number | string
+  total_amount: number | string
+  status: string
+  created_at?: Date | string | null
+  updated_at?: Date | string | null
+  user_name: string
+  user_email?: string | null
+  user_phone?: string | null
+  property_name: string
+  property_location: string
+  property_price: number | string
+  property_rating: number | string
+  property_image?: string | null
+}
+
+function mapRowToAdminBooking(row: AdminBookingRow): AdminBooking {
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    propertyId: Number(row.property_id),
+    checkIn: formatDate(row.check_in),
+    checkOut: formatDate(row.check_out),
+    guests: Number(row.guests),
+    totalAmount: Number(row.total_amount),
+    status: row.status,
+    createdAt: row.created_at ? new Date(row.created_at) : undefined,
+    updatedAt: row.updated_at ? new Date(row.updated_at) : undefined,
+    user: {
+      id: Number(row.user_id),
+      name: row.user_name,
+      email: row.user_email ?? null,
+      phone: row.user_phone ?? null,
+    },
+    camp: {
+      id: Number(row.property_id),
+      name: row.property_name,
+      location: row.property_location,
+      price: Number(row.property_price),
+      rating: Number(row.property_rating),
+      image: row.property_image ?? null,
+    },
+  }
+}
+
+export async function findAllBookingsWithDetails(): Promise<AdminBooking[]> {
+  const result = await pool.query<AdminBookingRow>(`
+    SELECT
+      b.id,
+      b.user_id,
+      b.property_id,
+      b.check_in,
+      b.check_out,
+      b.guests,
+      b.total_amount,
+      b.status,
+      b.created_at,
+      b.updated_at,
+      u.name AS user_name,
+      u.email AS user_email,
+      u.phone AS user_phone,
+      p.name AS property_name,
+      p.location AS property_location,
+      p.price_per_night AS property_price,
+      p.rating AS property_rating,
+      p.image_url AS property_image
+    FROM bookings b
+    JOIN users u ON b.user_id = u.id
+    JOIN properties p ON b.property_id = p.id
+    ORDER BY b.id DESC
+  `)
+
+  return result.rows.map(mapRowToAdminBooking)
+}
+
+export async function updateBookingStatus(
+  id: number,
+  currentStatus: string,
+  newStatus: string,
+): Promise<Booking | null> {
+  const result = await pool.query<BookingRow>(
+    `
+      UPDATE bookings
+      SET status = $3,
+          updated_at = NOW()
+      WHERE id = $1
+        AND status = $2
+      RETURNING
+        id,
+        user_id,
+        property_id,
+        check_in,
+        check_out,
+        guests,
+        total_amount,
+        status,
+        created_at,
+        updated_at
+    `,
+    [id, currentStatus, newStatus],
+  )
+
+  if (result.rows.length === 0) {
+    return null
+  }
+
+  return mapRowToBooking(result.rows[0])
+}
+

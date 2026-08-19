@@ -5,11 +5,13 @@ import { useEffect } from "react"
 import Navbar from "./components/Navbar"
 import PageWrapper from "./components/PageWrapper"
 import ProtectedRoute from "./components/ProtectedRoute"
+import AdminRoute from "./components/AdminRoute"
 
 import Home from "./pages/Home"
 import Booking from "./pages/Booking"
 import MyBookings from "./pages/MyBookings"
 import Login from "./pages/Login"
+import AdminDashboard from "./pages/AdminDashboard"
 
 /* ================= SCROLL TO TOP ================= */
 
@@ -75,6 +77,18 @@ function App() {
               <PageWrapper>
                 <Login />
               </PageWrapper>
+            }
+          />
+
+          {/* 🛡️ ADMIN BOOKINGS */}
+          <Route
+            path="/admin/bookings"
+            element={
+              <AdminRoute>
+                <PageWrapper>
+                  <AdminDashboard />
+                </PageWrapper>
+              </AdminRoute>
             }
           />
 

@@ -6,6 +6,7 @@ export type User = {
   phone?: string | null
   email?: string | null
   passwordHash?: string | null
+  role: string
   createdAt?: Date
   updatedAt?: Date
 }
@@ -23,6 +24,7 @@ export type UserRow = {
   phone?: string | null
   email?: string | null
   password_hash?: string | null
+  role: string
   created_at?: Date | string | null
   updated_at?: Date | string | null
 }
@@ -34,6 +36,7 @@ function mapRowToUser(row: UserRow): User {
     phone: row.phone ?? null,
     email: row.email ?? null,
     passwordHash: row.password_hash ?? null,
+    role: row.role,
     createdAt: row.created_at ? new Date(row.created_at) : undefined,
     updatedAt: row.updated_at ? new Date(row.updated_at) : undefined,
   }
@@ -48,6 +51,7 @@ export async function findUserById(id: number): Promise<User | null> {
         phone,
         email,
         password_hash,
+        role,
         created_at,
         updated_at
       FROM users
@@ -72,6 +76,7 @@ export async function findUserByEmail(email: string): Promise<User | null> {
         phone,
         email,
         password_hash,
+        role,
         created_at,
         updated_at
       FROM users
@@ -96,6 +101,7 @@ export async function findUserByPhone(phone: string): Promise<User | null> {
         phone,
         email,
         password_hash,
+        role,
         created_at,
         updated_at
       FROM users
@@ -132,6 +138,7 @@ export async function createUser(input: CreateUserInput): Promise<User> {
         phone,
         email,
         password_hash,
+        role,
         created_at,
         updated_at
     `,
@@ -157,6 +164,7 @@ export async function updateUserPhone(
         phone,
         email,
         password_hash,
+        role,
         created_at,
         updated_at
     `,

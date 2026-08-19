@@ -17,18 +17,22 @@ import { hashPassword, verifyPassword } from "./modules/users/password.util"
 import { signAuthToken } from "./modules/auth/auth.util"
 import {
   requireAuth,
+  requireAdmin,
   AuthenticatedRequest,
 } from "./modules/auth/auth.middleware"
 import {
   Booking,
   createBooking,
   findAllBookings,
+  findBookingById,
   findBookingsByUserId,
   deleteBookingForUser,
   cancelBookingForUser,
   findOverlappingBooking,
   findRecentDuplicateBooking,
   createBookingTransaction,
+  findAllBookingsWithDetails,
+  updateBookingStatus,
 } from "./modules/bookings/booking.repository"
 
 const app = express()
@@ -103,6 +107,7 @@ app.get(
           name: user.name,
           email: user.email ?? null,
           phone: user.phone ?? null,
+          role: user.role,
         },
       })
     } catch (error) {
@@ -150,7 +155,7 @@ app.post("/api/users/register", async (req: Request, res: Response) => {
       passwordHash,
     })
 
-    const token = signAuthToken(user.id)
+    const token = signAuthToken(user.id, user.role)
     res.cookie("auth_token", token, COOKIE_OPTIONS)
 
     return res.status(201).json({
@@ -210,7 +215,7 @@ app.post("/api/users/login", async (req: Request, res: Response) => {
       return res.status(401).json({ message: "Invalid credentials" })
     }
 
-    const token = signAuthToken(user.id)
+    const token = signAuthToken(user.id, user.role)
     res.cookie("auth_token", token, COOKIE_OPTIONS)
 
     const responseUser = {
@@ -690,6 +695,87 @@ app.delete(
     } catch (error) {
       console.error("Failed to cancel booking:", error)
       return res.status(500).json({ message: "Failed to cancel booking" })
+    }
+  },
+)
+
+/* =========================
+   ADMIN BOOKINGS
+========================= */
+
+// 📋 GET ALL BOOKINGS (ADMIN)
+app.get(
+  "/api/admin/bookings",
+  requireAuth,
+  requireAdmin,
+  async (_: Request, res: Response) => {
+    try {
+      const bookings = await findAllBookingsWithDetails()
+      return res.status(200).json(bookings)
+    } catch (error) {
+      console.error("Failed to fetch admin bookings:", error)
+      return res.status(500).json({ message: "Failed to fetch bookings" })
+    }
+  },
+)
+
+// ✏️ UPDATE BOOKING STATUS (ADMIN)
+app.patch(
+  "/api/admin/bookings/:id/status",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid booking ID" })
+    }
+
+    const { status } = req.body
+    const VALID_TARGET_STATUSES = ["confirmed", "completed", "cancelled"]
+    if (
+      !status ||
+      typeof status !== "string" ||
+      !VALID_TARGET_STATUSES.includes(status)
+    ) {
+      return res.status(400).json({ message: "Invalid target status" })
+    }
+
+    try {
+      const booking = await findBookingById(id)
+      if (!booking) {
+        return res.status(404).json({ message: "Booking not found" })
+      }
+
+      const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+        pending: ["confirmed", "cancelled"],
+        confirmed: ["completed", "cancelled"],
+        completed: [],
+        cancelled: [],
+      }
+
+      const allowedNext = ALLOWED_TRANSITIONS[booking.status] || []
+      if (!allowedNext.includes(status)) {
+        return res.status(400).json({ message: "Invalid status transition" })
+      }
+
+      const updatedBooking = await updateBookingStatus(
+        id,
+        booking.status,
+        status,
+      )
+      if (!updatedBooking) {
+        return res
+          .status(409)
+          .json({ message: "Booking status changed by another request" })
+      }
+
+      return res.status(200).json({
+        message: "Booking status updated",
+        booking: updatedBooking,
+      })
+    } catch (error) {
+      console.error("Failed to update booking status:", error)
+      return res.status(500).json({ message: "Failed to update booking status" })
     }
   },
 )

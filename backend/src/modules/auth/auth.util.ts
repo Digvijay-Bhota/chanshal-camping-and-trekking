@@ -12,17 +12,18 @@ function getJwtSecret(): string {
 
 export type AuthTokenPayload = JwtPayload & {
   userId: number
+  role: string
 }
 
-export function signAuthToken(userId: number): string {
+export function signAuthToken(userId: number, role: string): string {
   const secret = getJwtSecret()
-  return jwt.sign({ userId }, secret, {
+  return jwt.sign({ userId, role }, secret, {
     algorithm: "HS256",
     expiresIn: "7d",
   })
 }
 
-export function verifyAuthToken(token: string): number {
+export function verifyAuthToken(token: string): AuthTokenPayload {
   const secret = getJwtSecret()
   const decoded = jwt.verify(token, secret, {
     algorithms: ["HS256"],
@@ -32,10 +33,24 @@ export function verifyAuthToken(token: string): number {
     typeof decoded !== "object" ||
     decoded === null ||
     !("userId" in decoded) ||
-    typeof (decoded as AuthTokenPayload).userId !== "number"
+    !("role" in decoded)
   ) {
     throw new Error("Invalid token payload structure")
   }
 
-  return (decoded as AuthTokenPayload).userId
+  const payload = decoded as AuthTokenPayload
+  if (
+    typeof payload.userId !== "number" ||
+    !Number.isInteger(payload.userId) ||
+    payload.userId <= 0 ||
+    typeof payload.role !== "string" ||
+    payload.role.trim() === ""
+  ) {
+    throw new Error("Invalid token payload structure")
+  }
+
+  return {
+    userId: payload.userId,
+    role: payload.role.trim(),
+  }
 }
