@@ -43,6 +43,10 @@ function mapRowToUser(row: UserRow): User {
 }
 
 export async function findUserById(id: number): Promise<User | null> {
+  if (!id || typeof id !== "number" || Number.isNaN(id)) {
+    return null
+  }
+
   const result = await pool.query<UserRow>(
     `
       SELECT

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express"
 import { verifyAuthToken } from "./auth.util"
+import { findUserById } from "../users/user.repository"
 
 export interface AuthenticatedRequest extends Request {
   userId?: number
@@ -28,18 +29,27 @@ export function requireAuth(
   }
 }
 
-export function requireAdmin(
+export async function requireAdmin(
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction,
-): void | Response {
-  if (!req.userId || !req.userRole) {
+): Promise<void | Response> {
+  if (!req.userId) {
     return res.status(401).json({ message: "Unauthorized" })
   }
 
-  if (req.userRole !== "admin") {
-    return res.status(403).json({ message: "Forbidden: Admin access required" })
-  }
+  try {
+    const user = await findUserById(req.userId)
 
-  next()
+    if (!user || user.role !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Admin access required" })
+    }
+
+    req.userRole = user.role
+
+    next()
+  } catch (error) {
+    return res.status(500).json({ message: "Internal server error" })
+  }
 }
+
