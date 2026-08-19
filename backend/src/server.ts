@@ -25,6 +25,7 @@ import {
   findAllBookings,
   findBookingsByUserId,
   deleteBookingForUser,
+  cancelBookingForUser,
   findOverlappingBooking,
   findRecentDuplicateBooking,
   createBookingTransaction,
@@ -648,6 +649,7 @@ app.get(
           people: b.guests,
           days,
           total: b.totalAmount,
+          status: b.status,
           camp,
         }
       })
@@ -678,7 +680,7 @@ app.delete(
     }
 
     try {
-      const success = await deleteBookingForUser(id, userId)
+      const success = await cancelBookingForUser(id, userId)
 
       if (!success) {
         return res.status(404).json({ message: "Booking not found" })
@@ -686,7 +688,7 @@ app.delete(
 
       return res.json({ message: "Booking cancelled" })
     } catch (error) {
-      console.error("Failed to delete booking:", error)
+      console.error("Failed to cancel booking:", error)
       return res.status(500).json({ message: "Failed to cancel booking" })
     }
   },

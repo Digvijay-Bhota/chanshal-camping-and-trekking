@@ -192,6 +192,25 @@ export async function findBookingsByUserId(
   return result.rows.map(mapRowToBooking)
 }
 
+export async function cancelBookingForUser(
+  id: number,
+  userId: number,
+): Promise<boolean> {
+  const result = await pool.query(
+    `
+      UPDATE bookings
+      SET status = 'cancelled',
+          updated_at = NOW()
+      WHERE id = $1
+        AND user_id = $2
+        AND status != 'cancelled'
+    `,
+    [id, userId],
+  )
+
+  return (result.rowCount ?? 0) > 0
+}
+
 export async function deleteBookingForUser(
   id: number,
   userId: number,

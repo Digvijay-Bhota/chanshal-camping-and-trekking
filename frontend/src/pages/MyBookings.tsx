@@ -16,6 +16,7 @@ type Booking = {
   people: number
   days: number
   total: number
+  status?: string
   camp?: Camp
 }
 
@@ -91,8 +92,11 @@ function MyBookings() {
     }
   }
 
-  // 💰 TOTAL
-  const totalSpent = bookings.reduce((sum, b) => sum + b.total, 0)
+  // 💰 TOTAL (Excluding cancelled bookings from total spent calculation)
+  const totalSpent = bookings.reduce(
+    (sum, b) => (b.status === "cancelled" ? sum : sum + b.total),
+    0
+  )
 
   const formatCurrency = (amount: number) =>
     new Intl.NumberFormat("en-IN").format(amount)
@@ -132,87 +136,117 @@ function MyBookings() {
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
 
-        {bookings.map(b => (
-          <div
-            key={b.id}
-            className="bg-gray-100 dark:bg-gray-800 rounded-xl overflow-hidden shadow-lg hover:scale-105 transition"
-          >
-            {/* 🖼 CAMP IMAGE */}
-            {b.camp?.image && (
-              <img
-                src={b.camp.image}
-                className="h-40 w-full object-cover"
-              />
-            )}
+        {bookings.map(b => {
+          const isCancelled = b.status === "cancelled"
+          const isConfirmed = b.status === "confirmed"
 
-            <div className="p-5">
-
-              {/* 🏕 CAMP NAME */}
-              {b.camp?.name && (
-                <h2 className="text-xl font-bold">{b.camp.name}</h2>
+          return (
+            <div
+              key={b.id}
+              className="bg-gray-100 dark:bg-gray-800 rounded-xl overflow-hidden shadow-lg hover:scale-105 transition"
+            >
+              {/* 🖼 CAMP IMAGE */}
+              {b.camp?.image && (
+                <img
+                  src={b.camp.image}
+                  className="h-40 w-full object-cover"
+                />
               )}
 
-              {b.camp?.location && (
-                <p className="text-sm text-gray-400 mb-2">
-                  📍 {b.camp.location}
-                </p>
-              )}
+              <div className="p-5">
 
-              <div className="space-y-1 text-sm text-gray-600 dark:text-gray-300 mb-3">
-                <p className="font-medium text-gray-800 dark:text-gray-200">👤 {b.name}</p>
-                <p>📞 {b.phone}</p>
-              </div>
+                {/* 🏕 CAMP NAME & STATUS BADGE */}
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  {b.camp?.name && (
+                    <h2 className="text-xl font-bold">{b.camp.name}</h2>
+                  )}
 
-              {/* 📊 STAY DETAILS BADGES */}
-              <div className="grid grid-cols-3 gap-2 my-3">
-                <div className="bg-white dark:bg-gray-700/80 p-2 rounded-lg border border-gray-200 dark:border-gray-600 text-center">
-                  <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-300 mb-0.5">
-                    Date
-                  </span>
-                  <span className="block text-xs font-bold text-gray-800 dark:text-white truncate">
-                    📅 {b.date}
-                  </span>
-                </div>
-
-                <div className="bg-white dark:bg-gray-700/80 p-2 rounded-lg border border-gray-200 dark:border-gray-600 text-center">
-                  <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-300 mb-0.5">
-                    Guests
-                  </span>
-                  <span className="block text-xs font-bold text-gray-800 dark:text-white">
-                    👥 {b.people} {b.people === 1 ? "Person" : "People"}
+                  <span
+                    className={`px-2.5 py-0.5 text-xs font-semibold rounded-full capitalize ${
+                      isCancelled
+                        ? "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300 border border-red-200 dark:border-red-800"
+                        : isConfirmed
+                        ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 border border-green-200 dark:border-green-800"
+                        : "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-800"
+                    }`}
+                  >
+                    {isCancelled
+                      ? "Cancelled"
+                      : isConfirmed
+                      ? "Confirmed"
+                      : "Pending"}
                   </span>
                 </div>
 
-                <div className="bg-white dark:bg-gray-700/80 p-2 rounded-lg border border-gray-200 dark:border-gray-600 text-center">
-                  <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-300 mb-0.5">
-                    Duration
-                  </span>
-                  <span className="block text-xs font-bold text-gray-800 dark:text-white">
-                    🗓 {b.days || 1} {b.days === 1 ? "Day" : "Days"}
+                {b.camp?.location && (
+                  <p className="text-sm text-gray-400 mb-2">
+                    📍 {b.camp.location}
+                  </p>
+                )}
+
+                <div className="space-y-1 text-sm text-gray-600 dark:text-gray-300 mb-3">
+                  <p className="font-medium text-gray-800 dark:text-gray-200">👤 {b.name}</p>
+                  <p>📞 {b.phone}</p>
+                </div>
+
+                {/* 📊 STAY DETAILS BADGES */}
+                <div className="grid grid-cols-3 gap-2 my-3">
+                  <div className="bg-white dark:bg-gray-700/80 p-2 rounded-lg border border-gray-200 dark:border-gray-600 text-center">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-300 mb-0.5">
+                      Date
+                    </span>
+                    <span className="block text-xs font-bold text-gray-800 dark:text-white truncate">
+                      📅 {b.date}
+                    </span>
+                  </div>
+
+                  <div className="bg-white dark:bg-gray-700/80 p-2 rounded-lg border border-gray-200 dark:border-gray-600 text-center">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-300 mb-0.5">
+                      Guests
+                    </span>
+                    <span className="block text-xs font-bold text-gray-800 dark:text-white">
+                      👥 {b.people} {b.people === 1 ? "Person" : "People"}
+                    </span>
+                  </div>
+
+                  <div className="bg-white dark:bg-gray-700/80 p-2 rounded-lg border border-gray-200 dark:border-gray-600 text-center">
+                    <span className="block text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-300 mb-0.5">
+                      Duration
+                    </span>
+                    <span className="block text-xs font-bold text-gray-800 dark:text-white">
+                      🗓 {b.days || 1} {b.days === 1 ? "Day" : "Days"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-xs text-gray-500 dark:text-gray-300 uppercase font-semibold">Total</span>
+                  <span className="text-green-500 dark:text-green-400 font-bold text-lg">
+                    ₹ {formatCurrency(b.total)}
                   </span>
                 </div>
+
+                {isCancelled ? (
+                  <button
+                    disabled
+                    className="mt-3 w-full bg-gray-300 dark:bg-gray-700/80 py-2 rounded text-gray-500 dark:text-gray-400 cursor-not-allowed text-sm font-semibold"
+                  >
+                    Cancelled
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => cancelBooking(b.id)}
+                    disabled={deletingId === b.id}
+                    className="mt-3 w-full bg-red-500 py-2 rounded hover:bg-red-600 transition disabled:opacity-50 text-white text-sm font-semibold"
+                  >
+                    {deletingId === b.id ? "Cancelling..." : "Cancel Booking"}
+                  </button>
+                )}
+
               </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-xs text-gray-500 dark:text-gray-300 uppercase font-semibold">Total</span>
-                <span className="text-green-500 dark:text-green-400 font-bold text-lg">
-                  ₹ {formatCurrency(b.total)}
-                </span>
-              </div>
-
-              <button
-                onClick={() => cancelBooking(b.id)}
-                disabled={deletingId === b.id}
-                className="mt-3 w-full bg-red-500 py-2 rounded hover:bg-red-600 transition disabled:opacity-50"
-              >
-                {deletingId === b.id
-                  ? "Cancelling..."
-                  : "Cancel Booking"}
-              </button>
-
             </div>
-          </div>
-        ))}
+          )
+        })}
 
       </div>
     </div>
