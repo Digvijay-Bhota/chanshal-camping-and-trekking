@@ -67,6 +67,7 @@ function loadRazorpayScript(): Promise<boolean> {
       resolve(true)
       return
     }
+
     const script = document.createElement("script")
     script.src = "https://checkout.razorpay.com/v1/checkout.js"
     script.onload = () => resolve(true)
@@ -151,6 +152,7 @@ function MyBookings() {
   // 💳 PAY NOW (RAZORPAY CHECKOUT FOR UNPAID BOOKING)
   const handlePayNow = async (booking: Booking) => {
     setPayingId(booking.id)
+
     try {
       // 1. Create Payment Order
       const orderRes = await fetch(`${API}/api/payments/create-order`, {
@@ -287,6 +289,7 @@ function MyBookings() {
           const isConfirmed = b.status === "confirmed"
           const isCompleted = b.status === "completed"
           const isPaid = b.paymentStatus === "paid"
+          const isRefunded = b.paymentStatus === "refunded"
 
           return (
             <div
@@ -312,6 +315,7 @@ function MyBookings() {
                     )}
 
                     <div className="flex flex-wrap items-center gap-1 justify-end shrink-0">
+
                       {/* RESERVATION STATUS BADGE */}
                       <span
                         className={`px-2 py-0.5 text-[11px] font-semibold rounded-full capitalize ${
@@ -336,13 +340,16 @@ function MyBookings() {
                       {/* PAYMENT STATUS BADGE */}
                       <span
                         className={`px-2 py-0.5 text-[11px] font-semibold rounded-full capitalize ${
-                          isPaid
+                          isRefunded
+                            ? "bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
+                            : isPaid
                             ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
                             : "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
                         }`}
                       >
-                        {isPaid ? "Paid" : "Unpaid"}
+                        {isRefunded ? "Refunded" : isPaid ? "Paid" : "Unpaid"}
                       </span>
+
                     </div>
                   </div>
 
@@ -399,7 +406,8 @@ function MyBookings() {
 
               {/* ACTION BUTTONS */}
               <div className="p-5 pt-0 space-y-2">
-                {!isPaid && !isCancelled && (
+
+                {!isPaid && !isRefunded && !isCancelled && (
                   <button
                     onClick={() => handlePayNow(b)}
                     disabled={payingId === b.id}
@@ -425,6 +433,7 @@ function MyBookings() {
                     {deletingId === b.id ? "Cancelling..." : "Cancel Booking"}
                   </button>
                 )}
+
               </div>
 
             </div>
