@@ -74,6 +74,7 @@ function AdminDashboard() {
     targetStatus: "confirmed" | "completed" | "cancelled"
   ) => {
     setUpdatingId(bookingId)
+
     try {
       const res = await fetch(`${API}/api/admin/bookings/${bookingId}/status`, {
         method: "PATCH",
@@ -121,24 +122,28 @@ function AdminDashboard() {
             <Clock size={12} /> Pending
           </span>
         )
+
       case "confirmed":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
             <ShieldCheck size={12} /> Confirmed
           </span>
         )
+
       case "completed":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
             <CheckCircle size={12} /> Completed
           </span>
         )
+
       case "cancelled":
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300">
             <XCircle size={12} /> Cancelled
           </span>
         )
+
       default:
         return (
           <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
@@ -151,13 +156,14 @@ function AdminDashboard() {
   return (
     <div className="min-h-screen pt-24 pb-16 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white transition-colors duration-200">
       <div className="container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        
+
         {/* HEADER */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-gray-900 dark:text-white">
               🛡️ Admin Booking Dashboard
             </h1>
+
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
               Manage platform bookings, view customer details, and update booking status.
             </p>
@@ -179,6 +185,7 @@ function AdminDashboard() {
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               Total
             </p>
+
             <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
               {totalCount}
             </p>
@@ -188,6 +195,7 @@ function AdminDashboard() {
             <p className="text-xs font-medium text-amber-700 dark:text-amber-400 uppercase tracking-wider">
               Pending
             </p>
+
             <p className="mt-2 text-2xl font-bold text-amber-800 dark:text-amber-300">
               {pendingCount}
             </p>
@@ -197,6 +205,7 @@ function AdminDashboard() {
             <p className="text-xs font-medium text-blue-700 dark:text-blue-400 uppercase tracking-wider">
               Confirmed
             </p>
+
             <p className="mt-2 text-2xl font-bold text-blue-800 dark:text-blue-300">
               {confirmedCount}
             </p>
@@ -206,6 +215,7 @@ function AdminDashboard() {
             <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
               Completed
             </p>
+
             <p className="mt-2 text-2xl font-bold text-emerald-800 dark:text-emerald-300">
               {completedCount}
             </p>
@@ -215,6 +225,7 @@ function AdminDashboard() {
             <p className="text-xs font-medium text-rose-700 dark:text-rose-400 uppercase tracking-wider">
               Cancelled
             </p>
+
             <p className="mt-2 text-2xl font-bold text-rose-800 dark:text-rose-300">
               {cancelledCount}
             </p>
@@ -292,9 +303,11 @@ function AdminDashboard() {
                           <div className="font-semibold text-gray-900 dark:text-white">
                             {b.user.name}
                           </div>
+
                           <div className="text-xs text-gray-500 dark:text-gray-400">
                             {b.user.email || "No email"}
                           </div>
+
                           <div className="text-xs text-gray-500 dark:text-gray-400">
                             {b.user.phone || "No phone"}
                           </div>
@@ -305,6 +318,7 @@ function AdminDashboard() {
                           <div className="font-semibold text-gray-900 dark:text-white">
                             {b.camp.name}
                           </div>
+
                           <div className="text-xs text-gray-500 dark:text-gray-400">
                             📍 {b.camp.location}
                           </div>
@@ -315,6 +329,7 @@ function AdminDashboard() {
                           <div className="text-gray-900 dark:text-white font-medium">
                             {b.checkIn}
                           </div>
+
                           <div className="text-gray-500 dark:text-gray-400">
                             to {b.checkOut}
                           </div>
@@ -340,6 +355,10 @@ function AdminDashboard() {
                           {b.paymentStatus === "paid" ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
                               <CheckCircle size={12} /> Paid ✅
+                            </span>
+                          ) : b.paymentStatus === "refunded" ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                              <RefreshCw size={12} /> Refunded ↩️
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
@@ -404,7 +423,6 @@ function AdminDashboard() {
             </div>
           </div>
         )}
-
       </div>
     </div>
   )
