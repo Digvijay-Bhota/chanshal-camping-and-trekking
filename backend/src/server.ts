@@ -234,8 +234,7 @@ app.post(
     }
   },
 )
-
-app.use(express.json())
+app.use(express.json({limit: "100kb"}))
 app.use(cookieParser())
 
 const COOKIE_OPTIONS = {
