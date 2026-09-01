@@ -1047,7 +1047,22 @@ async function processFullRefundAndCancellation(
       },
     })
     refundId = rzpRefund.id
-  } catch (err) {
+  } catch (err: any) {
+    const errorDetails = {
+      description: err?.error?.description || err?.description,
+      code: err?.error?.code || err?.code,
+      reason: err?.error?.reason || err?.reason,
+      statusCode: err?.statusCode,
+      message: err?.error?.message || err?.message,
+    }
+
+    logError("Razorpay refund API call failed", {
+      route: "processFullRefundAndCancellation",
+      bookingId,
+      paymentId: payment.id,
+      errorDetails,
+    })
+
     rzpError = err instanceof Error ? err.message : "Razorpay refund execution failed"
   }
 
