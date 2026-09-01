@@ -22,6 +22,7 @@ import {
   prepareRefundTransaction,
   recordRefundSuccess,
   recordRefundFailure,
+  createPaymentOrderWithLock,
 } from "./modules/payments/payment.repository"
 import {
   findUserById,
@@ -1633,70 +1634,40 @@ app.post(
     }
 
     try {
-      const booking = await findBookingById(parsedBookingId)
-      if (!booking) {
+      const razorpay = getRazorpayInstance()
+      const result = await createPaymentOrderWithLock(parsedBookingId, userId, async (booking) => {
+        const amountInPaise = Math.round(booking.totalAmount * 100)
+        const receipt = `booking_${booking.id}`
+        return await razorpay.orders.create({
+          amount: amountInPaise,
+          currency: "INR",
+          receipt,
+          notes: {
+            bookingId: String(booking.id),
+            userId: String(userId),
+          },
+        })
+      })
+
+      if (result.status === "booking_not_found") {
         return res.status(404).json({ message: "Booking not found" })
       }
-
-      if (booking.userId !== userId) {
-        return res
-          .status(403)
-          .json({ message: "Booking does not belong to authenticated user" })
+      if (result.status === "unauthorized") {
+        return res.status(403).json({ message: "Booking does not belong to authenticated user" })
       }
-
-      if (booking.status !== "pending") {
-        return res
-          .status(400)
-          .json({ message: "Booking status is not pending" })
+      if (result.status === "booking_not_pending") {
+        return res.status(400).json({ message: "Booking status is not pending" })
       }
-
-      const paymentStatusRes = await pool.query<{ payment_status: string }>(
-        `SELECT payment_status FROM bookings WHERE id = $1`,
-        [parsedBookingId],
-      )
-      const paymentStatus =
-        paymentStatusRes.rows[0]?.payment_status || "unpaid"
-
-      if (paymentStatus !== "unpaid") {
-        return res
-          .status(400)
-          .json({ message: "Booking is already paid or processing" })
+      if (result.status === "already_paid") {
+        return res.status(400).json({ message: "Booking is already paid or processing" })
       }
-
-      if (
-        typeof booking.totalAmount !== "number" ||
-        isNaN(booking.totalAmount) ||
-        booking.totalAmount <= 0
-      ) {
+      if (result.status === "invalid_amount") {
         return res.status(400).json({ message: "Invalid booking total amount" })
       }
 
-      const amountInPaise = Math.round(booking.totalAmount * 100)
-      const receipt = `booking_${booking.id}`
-
-      const razorpay = getRazorpayInstance()
-      const rzpOrder = await razorpay.orders.create({
-        amount: amountInPaise,
-        currency: "INR",
-        receipt,
-        notes: {
-          bookingId: String(booking.id),
-          userId: String(userId),
-        },
-      })
-
-      await createPaymentRecord({
-        bookingId: booking.id,
-        userId,
-        provider: "razorpay",
-        providerOrderId: rzpOrder.id,
-        amount: booking.totalAmount,
-        currency: "INR",
-        status: "created",
-      })
-
+      const amountInPaise = Math.round(result.payment.amount * 100)
       return res.status(200).json({
-        orderId: rzpOrder.id,
+        orderId: result.payment.providerOrderId,
         amount: amountInPaise,
         currency: "INR",
         keyId: process.env.RAZORPAY_KEY_ID,

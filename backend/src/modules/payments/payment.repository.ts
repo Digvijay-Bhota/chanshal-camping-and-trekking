@@ -567,3 +567,143 @@ export async function recordRefundFailure(
     client.release()
   }
 }
+
+export async function createPaymentOrderWithLock(
+  bookingId: number,
+  userId: number,
+  createOrderCallback: (booking: { id: number; totalAmount: number }) => Promise<any>,
+): Promise<any> {
+  const client = await pool.connect()
+  try {
+    // Acquire session-level advisory lock
+    await client.query(`SELECT pg_advisory_lock($1::bigint)`, [bookingId])
+
+    await client.query("BEGIN")
+
+    const bookingRes = await client.query(
+      `SELECT id, user_id, status, payment_status, total_amount FROM bookings WHERE id = $1`,
+      [bookingId]
+    )
+
+    if (bookingRes.rows.length === 0) {
+      await client.query("ROLLBACK")
+      return { status: "booking_not_found" }
+    }
+
+    const bookingRow = bookingRes.rows[0]
+
+    if (Number(bookingRow.user_id) !== userId) {
+      await client.query("ROLLBACK")
+      return { status: "unauthorized" }
+    }
+
+    if (bookingRow.status !== "pending") {
+      await client.query("ROLLBACK")
+      return { status: "booking_not_pending" }
+    }
+
+    if (bookingRow.payment_status !== "unpaid") {
+      await client.query("ROLLBACK")
+      return { status: "already_paid" }
+    }
+
+    const totalAmount = Number(bookingRow.total_amount)
+    if (isNaN(totalAmount) || totalAmount <= 0) {
+      await client.query("ROLLBACK")
+      return { status: "invalid_amount" }
+    }
+
+    const paymentRes = await client.query<PaymentRow>(
+      `
+        SELECT
+          id,
+          booking_id,
+          user_id,
+          provider,
+          provider_payment_id,
+          provider_order_id,
+          provider_signature,
+          amount,
+          currency,
+          status,
+          payment_method,
+          error_message,
+          created_at,
+          updated_at
+        FROM payments
+        WHERE booking_id = $1
+        ORDER BY id DESC
+        LIMIT 1
+      `,
+      [bookingId]
+    )
+
+    if (paymentRes.rows.length > 0) {
+      const existingPayment = mapRowToPayment(paymentRes.rows[0])
+      if (existingPayment.status === "created" && existingPayment.providerOrderId) {
+        await client.query("ROLLBACK")
+        return { status: "existing_order", payment: existingPayment }
+      }
+      if (
+        existingPayment.status === "captured" ||
+        existingPayment.status === "refunded" ||
+        existingPayment.status === "refund_pending"
+      ) {
+        await client.query("ROLLBACK")
+        return { status: "already_paid" }
+      }
+      // If status is 'failed', we allow a new attempt
+    }
+
+    await client.query("COMMIT")
+
+    // Outside Postgres transaction, perform network call while holding advisory lock
+    const booking = { id: bookingId, totalAmount }
+    const rzpOrder = await createOrderCallback(booking)
+
+    await client.query("BEGIN")
+    const newPaymentRes = await client.query<PaymentRow>(
+      `
+        INSERT INTO payments (
+          booking_id,
+          user_id,
+          provider,
+          provider_order_id,
+          amount,
+          currency,
+          status
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING
+          id,
+          booking_id,
+          user_id,
+          provider,
+          provider_payment_id,
+          provider_order_id,
+          provider_signature,
+          amount,
+          currency,
+          status,
+          payment_method,
+          error_message,
+          created_at,
+          updated_at
+      `,
+      [bookingId, userId, "razorpay", rzpOrder.id, totalAmount, "INR", "created"]
+    )
+    await client.query("COMMIT")
+
+    return { status: "created", payment: mapRowToPayment(newPaymentRes.rows[0]) }
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {})
+    throw error
+  } finally {
+    try {
+      await client.query(`SELECT pg_advisory_unlock($1::bigint)`, [bookingId])
+    } catch (e) {
+      // Ignored
+    }
+    client.release()
+  }
+}
