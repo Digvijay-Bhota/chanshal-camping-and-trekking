@@ -462,7 +462,10 @@ export async function prepareRefundTransaction(
       return { status: "already_refunded" }
     }
 
-    if (payment.status !== "captured" || !payment.providerPaymentId) {
+    if (
+      (payment.status !== "captured" && payment.status !== "refund_failed") ||
+      !payment.providerPaymentId
+    ) {
       await client.query("ROLLBACK")
       if (!payment.providerPaymentId) {
         return { status: "missing_payment_id" }

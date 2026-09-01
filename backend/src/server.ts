@@ -1039,14 +1039,38 @@ async function processFullRefundAndCancellation(
 
   try {
     const razorpay = getRazorpayInstance()
-    const rzpRefund = await razorpay.payments.refund(payment.providerPaymentId!, {
-      amount: amountInPaise,
-      notes: {
-        bookingId: String(bookingId),
-        paymentId: String(payment.id),
-      },
-    })
-    refundId = rzpRefund.id
+
+    if (payment.status === "refund_failed") {
+      const rzpPayment = await razorpay.payments.fetch(payment.providerPaymentId!)
+      if (
+        rzpPayment.refund_status === "full" ||
+        (rzpPayment.amount_refunded !== undefined && rzpPayment.amount_refunded >= amountInPaise)
+      ) {
+        const refundList = await razorpay.payments.fetchMultipleRefund(payment.providerPaymentId!)
+        const processedRefund = refundList.items?.find(
+          refund => refund.status === "processed",
+        )
+
+        if (processedRefund) {
+          refundId = processedRefund.id
+        } else {
+          throw new Error(
+            "Gateway indicated full refund but no processed refund record found",
+          )
+        }
+      }
+    }
+
+    if (!refundId) {
+      const rzpRefund = await razorpay.payments.refund(payment.providerPaymentId!, {
+        amount: amountInPaise,
+        notes: {
+          bookingId: String(bookingId),
+          paymentId: String(payment.id),
+        },
+      })
+      refundId = rzpRefund.id
+    }
   } catch (err: any) {
     const errorDetails = {
       description: err?.error?.description || err?.description,
