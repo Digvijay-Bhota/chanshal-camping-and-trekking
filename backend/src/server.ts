@@ -54,6 +54,8 @@ import {
 
 const app = express()
 
+app.set("trust proxy", 1)
+
 // Comment
 app.use(
   cors({
