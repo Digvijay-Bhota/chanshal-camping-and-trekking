@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feature/platform-rebuild
   pull_request:
     branches:
       - main
