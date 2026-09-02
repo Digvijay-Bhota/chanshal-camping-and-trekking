@@ -276,6 +276,16 @@ export async function capturePaymentAndConfirmBooking(
   try {
     await client.query("BEGIN")
 
+    const bookingCheck = await client.query(`SELECT status, payment_status FROM bookings WHERE id = $1 FOR UPDATE`, [bookingId])
+    if (bookingCheck.rows.length === 0) {
+      throw new Error("Booking not found")
+    }
+
+    const { status: bStatus, payment_status: pStatus } = bookingCheck.rows[0]
+    if (bStatus === "cancelled" || pStatus === "refunded") {
+      throw new Error(`Invalid transition: booking is already ${bStatus} / ${pStatus}`)
+    }
+
     const paymentRes = await client.query<PaymentRow>(
       `
         UPDATE payments

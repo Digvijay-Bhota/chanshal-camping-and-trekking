@@ -38,11 +38,22 @@ function AdminDashboard() {
   const [loading, setLoading] = useState<boolean>(true)
   const [updatingId, setUpdatingId] = useState<number | null>(null)
   const [filterStatus, setFilterStatus] = useState<string>("all")
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState<string>("all")
+  const [filterPropertyId, setFilterPropertyId] = useState<string>("")
+  const [filterStartDate, setFilterStartDate] = useState<string>("")
+  const [filterEndDate, setFilterEndDate] = useState<string>("")
 
   const fetchBookings = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`${API}/api/admin/bookings`, {
+      const params = new URLSearchParams()
+      if (filterStatus !== "all") params.append("status", filterStatus)
+      if (filterPaymentStatus !== "all") params.append("paymentStatus", filterPaymentStatus)
+      if (filterPropertyId) params.append("propertyId", filterPropertyId)
+      if (filterStartDate) params.append("startDate", filterStartDate)
+      if (filterEndDate) params.append("endDate", filterEndDate)
+
+      const res = await fetch(`${API}/api/admin/bookings?${params.toString()}`, {
         credentials: "include",
       })
 
@@ -64,7 +75,7 @@ function AdminDashboard() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [filterStatus, filterPaymentStatus, filterPropertyId, filterStartDate, filterEndDate])
 
   useEffect(() => {
     fetchBookings()
@@ -104,16 +115,59 @@ function AdminDashboard() {
     }
   }
 
-  // Summary counts
+  const [detailsBookingId, setDetailsBookingId] = useState<number | null>(null)
+  const [detailsData, setDetailsData] = useState<any>(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+
+  const handleViewDetails = async (id: number) => {
+    setDetailsBookingId(id)
+    setDetailsLoading(true)
+    try {
+      const res = await fetch(`${API}/api/admin/bookings/${id}`, { credentials: "include" })
+      if (!res.ok) throw new Error("Failed to fetch details")
+      setDetailsData(await res.json())
+    } catch {
+      toast.error("Error loading booking details")
+      setDetailsBookingId(null)
+    } finally {
+      setDetailsLoading(false)
+    }
+  }
+
+  const handleCancelBooking = async (id: number) => {
+    if (!confirm("Are you sure you want to cancel this booking? This action may process a refund.")) return
+
+    setUpdatingId(id)
+    try {
+      const res = await fetch(`${API}/api/admin/bookings/${id}/cancel`, {
+        method: "POST",
+        credentials: "include",
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to cancel booking")
+      }
+
+      toast.success(data.message || "Booking cancelled successfully")
+      setBookings(prev =>
+        prev.map(b => (b.id === id ? { ...b, status: "cancelled", paymentStatus: b.paymentStatus === "paid" ? "refunded" : b.paymentStatus } : b))
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Network error cancelling booking")
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  // Summary counts based on fetched data
   const totalCount = bookings.length
   const pendingCount = bookings.filter(b => b.status === "pending").length
   const confirmedCount = bookings.filter(b => b.status === "confirmed").length
   const completedCount = bookings.filter(b => b.status === "completed").length
   const cancelledCount = bookings.filter(b => b.status === "cancelled").length
 
-  const filteredBookings = filterStatus === "all"
-    ? bookings
-    : bookings.filter(b => b.status === filterStatus)
+  const filteredBookings = bookings
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -256,6 +310,52 @@ function AdminDashboard() {
           ))}
         </div>
 
+        {/* ADVANCED FILTERS */}
+        <div className="flex flex-wrap gap-4 mb-6 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
+          <div>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Payment Status</label>
+            <select
+              value={filterPaymentStatus}
+              onChange={e => setFilterPaymentStatus(e.target.value)}
+              className="text-sm p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none"
+            >
+              <option value="all">All</option>
+              <option value="paid">Paid</option>
+              <option value="unpaid">Unpaid</option>
+              <option value="refunded">Refunded</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Property ID</label>
+            <input
+              type="number"
+              min="1"
+              value={filterPropertyId}
+              onChange={e => setFilterPropertyId(e.target.value)}
+              placeholder="e.g. 1"
+              className="w-24 text-sm p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Start Date</label>
+            <input
+              type="date"
+              value={filterStartDate}
+              onChange={e => setFilterStartDate(e.target.value)}
+              className="text-sm p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">End Date</label>
+            <input
+              type="date"
+              value={filterEndDate}
+              onChange={e => setFilterEndDate(e.target.value)}
+              className="text-sm p-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white outline-none"
+            />
+          </div>
+        </div>
+
         {/* BOOKINGS TABLE CONTAINER */}
         {loading ? (
           <div className="py-20 text-center text-gray-500 dark:text-gray-400 font-medium">
@@ -370,51 +470,52 @@ function AdminDashboard() {
 
                         {/* ACTIONS */}
                         <td className="py-4 px-4 text-right whitespace-nowrap">
-                          {b.status === "pending" && (
-                            <div className="inline-flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => handleUpdateStatus(b.id, "confirmed")}
-                                disabled={isUpdating}
-                                className="px-2.5 py-1 text-xs font-semibold rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 transition shadow-sm"
-                              >
-                                {isUpdating ? "Updating..." : "Confirm"}
-                              </button>
+                          <div className="inline-flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleViewDetails(b.id)}
+                              className="px-2.5 py-1 text-xs font-semibold rounded-md text-gray-700 bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 transition"
+                            >
+                              View
+                            </button>
 
-                              <button
-                                onClick={() => handleUpdateStatus(b.id, "cancelled")}
-                                disabled={isUpdating}
-                                className="px-2.5 py-1 text-xs font-semibold rounded-md text-rose-700 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:hover:bg-rose-900/60 disabled:opacity-50 transition"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          )}
+                            {b.status === "pending" && (
+                              <>
+                                <button
+                                  onClick={() => handleUpdateStatus(b.id, "confirmed")}
+                                  disabled={isUpdating}
+                                  className="px-2.5 py-1 text-xs font-semibold rounded-md text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 transition shadow-sm"
+                                >
+                                  {isUpdating ? "Updating..." : "Confirm"}
+                                </button>
+                                <button
+                                  onClick={() => handleCancelBooking(b.id)}
+                                  disabled={isUpdating}
+                                  className="px-2.5 py-1 text-xs font-semibold rounded-md text-rose-700 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:hover:bg-rose-900/60 disabled:opacity-50 transition"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
 
-                          {b.status === "confirmed" && (
-                            <div className="inline-flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => handleUpdateStatus(b.id, "completed")}
-                                disabled={isUpdating}
-                                className="px-2.5 py-1 text-xs font-semibold rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition shadow-sm"
-                              >
-                                {isUpdating ? "Updating..." : "Mark Completed"}
-                              </button>
-
-                              <button
-                                onClick={() => handleUpdateStatus(b.id, "cancelled")}
-                                disabled={isUpdating}
-                                className="px-2.5 py-1 text-xs font-semibold rounded-md text-rose-700 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:hover:bg-rose-900/60 disabled:opacity-50 transition"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          )}
-
-                          {(b.status === "completed" || b.status === "cancelled") && (
-                            <span className="text-xs text-gray-400 dark:text-gray-500 italic">
-                              No actions
-                            </span>
-                          )}
+                            {b.status === "confirmed" && (
+                              <>
+                                <button
+                                  onClick={() => handleUpdateStatus(b.id, "completed")}
+                                  disabled={isUpdating}
+                                  className="px-2.5 py-1 text-xs font-semibold rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition shadow-sm"
+                                >
+                                  {isUpdating ? "Updating..." : "Complete"}
+                                </button>
+                                <button
+                                  onClick={() => handleCancelBooking(b.id)}
+                                  disabled={isUpdating}
+                                  className="px-2.5 py-1 text-xs font-semibold rounded-md text-rose-700 bg-rose-100 hover:bg-rose-200 dark:bg-rose-950/60 dark:text-rose-300 dark:hover:bg-rose-900/60 disabled:opacity-50 transition"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )
@@ -427,6 +528,72 @@ function AdminDashboard() {
 
         <AdminAvailability />
       </div>
+
+      {/* DETAILS MODAL */}
+      {detailsBookingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold dark:text-white">Booking #{detailsBookingId}</h2>
+              <button onClick={() => setDetailsBookingId(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full">
+                <XCircle size={24} className="text-gray-500" />
+              </button>
+            </div>
+
+            {detailsLoading ? (
+              <p className="text-center py-8 text-gray-500">Loading details...</p>
+            ) : detailsData ? (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-xl">
+                    <h3 className="text-sm font-semibold text-gray-500 mb-2">Customer Info</h3>
+                    <p className="dark:text-white font-medium">{detailsData.user?.name}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">{detailsData.user?.email || "No email"}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">{detailsData.user?.phone || "No phone"}</p>
+                  </div>
+                  <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-xl">
+                    <h3 className="text-sm font-semibold text-gray-500 mb-2">Property Info</h3>
+                    <p className="dark:text-white font-medium">{detailsData.camp?.name}</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">📍 {detailsData.camp?.location}</p>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-xl">
+                  <h3 className="text-sm font-semibold text-gray-500 mb-2">Booking Details</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-500">Check In:</span>
+                      <p className="dark:text-white font-medium">{detailsData.checkIn}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Check Out:</span>
+                      <p className="dark:text-white font-medium">{detailsData.checkOut}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Guests:</span>
+                      <p className="dark:text-white font-medium">{detailsData.guests}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Total Amount:</span>
+                      <p className="dark:text-white font-medium">₹{detailsData.totalAmount}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Status:</span>
+                      <div className="mt-1">{getStatusBadge(detailsData.status)}</div>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Payment:</span>
+                      <p className="dark:text-white font-medium uppercase">{detailsData.paymentStatus}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-center py-8 text-rose-500">Failed to load booking details.</p>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

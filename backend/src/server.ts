@@ -46,6 +46,7 @@ import {
   findBookingsByUserId,
   deleteBookingForUser,
   cancelBookingForUser,
+  cancelBookingById,
   findOverlappingBooking,
   findRecentDuplicateBooking,
   createBookingTransaction,
@@ -1309,7 +1310,35 @@ app.get(
     const userId = authReq.userId
 
     try {
-      const bookings = await findAllBookingsWithDetails()
+      const { status, paymentStatus, propertyId, startDate, endDate } = req.query
+
+      let parsedPropertyId: number | undefined
+      if (propertyId) {
+        parsedPropertyId = Number(propertyId)
+        if (!Number.isInteger(parsedPropertyId) || parsedPropertyId <= 0) {
+          return res.status(400).json({ message: "Invalid property ID filter" })
+        }
+      }
+
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+      if (startDate && (typeof startDate !== "string" || !dateRegex.test(startDate))) {
+        return res.status(400).json({ message: "Invalid start date format (YYYY-MM-DD required)" })
+      }
+      if (endDate && (typeof endDate !== "string" || !dateRegex.test(endDate))) {
+        return res.status(400).json({ message: "Invalid end date format (YYYY-MM-DD required)" })
+      }
+      if (startDate && endDate && startDate > endDate) {
+        return res.status(400).json({ message: "Start date cannot be after end date" })
+      }
+
+      const filters = {
+        status: status as string | undefined,
+        paymentStatus: paymentStatus as string | undefined,
+        propertyId: parsedPropertyId,
+        startDate: startDate as string | undefined,
+        endDate: endDate as string | undefined,
+      }
+      const bookings = await findAllBookingsWithDetails(filters)
       return res.status(200).json(bookings)
     } catch (error) {
       logError("Failed to fetch admin bookings", {
@@ -1321,6 +1350,77 @@ app.get(
       return res.status(500).json({ message: "Failed to fetch bookings" })
     }
   },
+)
+
+// 📋 GET SINGLE BOOKING (ADMIN)
+app.get(
+  "/api/admin/bookings/:id",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid booking ID" })
+    }
+    try {
+      const booking = await findBookingById(id)
+      if (!booking) return res.status(404).json({ message: "Booking not found" })
+
+      const user = await findUserById(booking.userId)
+      const camp = await findPropertyById(booking.propertyId)
+
+      return res.status(200).json({ ...booking, user, camp })
+    } catch (error) {
+      return res.status(500).json({ message: "Failed to fetch booking details" })
+    }
+  }
+)
+
+// 🚫 CANCEL BOOKING (ADMIN)
+app.post(
+  "/api/admin/bookings/:id/cancel",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ message: "Invalid booking ID" })
+    }
+    try {
+      const booking = await findBookingById(id)
+      if (!booking) return res.status(404).json({ message: "Booking not found" })
+
+      if (booking.status === "cancelled") {
+        return res.status(409).json({ message: "Booking is already cancelled" })
+      }
+
+      if (booking.paymentStatus === "paid") {
+        // Admin refund bypasses userId check
+        const refundResult = await processFullRefundAndCancellation(id)
+        if (refundResult.status === "success") {
+          return res.status(200).json({ message: "Booking cancelled and payment refunded" })
+        }
+        if (refundResult.status === "already_refunded") {
+          return res.status(409).json({ message: "Refund already processed for this booking" })
+        }
+        if (refundResult.status === "refund_failed") {
+          return res.status(502).json({
+            message: refundResult.message || "Failed to process refund for booking cancellation",
+          })
+        }
+        return res.status(502).json({
+          message: "Failed to process refund for booking cancellation",
+        })
+      }
+
+      // Unpaid
+      const success = await cancelBookingById(id)
+      if (!success) return res.status(404).json({ message: "Booking not found" })
+      return res.status(200).json({ message: "Booking cancelled" })
+    } catch (error) {
+      return res.status(500).json({ message: "Failed to cancel booking" })
+    }
+  }
 )
 
 // ✏️ UPDATE BOOKING STATUS (ADMIN)
@@ -1354,41 +1454,15 @@ app.patch(
       }
 
       const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-        pending: ["confirmed", "cancelled"],
-        confirmed: ["completed", "cancelled"],
+        pending: [], // No manual pending->confirmed or pending->cancelled through this generic patch endpoint
+        confirmed: ["completed"], // Must use cancellation flow for cancelled
         completed: [],
         cancelled: [],
       }
 
       const allowedNext = ALLOWED_TRANSITIONS[booking.status] || []
       if (!allowedNext.includes(status)) {
-        return res.status(400).json({ message: "Invalid status transition" })
-      }
-
-      if (status === "cancelled" && booking.paymentStatus === "paid") {
-        const refundResult = await processFullRefundAndCancellation(id)
-
-        if (refundResult.status === "success") {
-          const updatedBooking = await findBookingById(id)
-          return res.status(200).json({
-            message: "Booking status updated to cancelled and payment refunded",
-            booking: updatedBooking || booking,
-          })
-        }
-
-        if (refundResult.status === "already_refunded") {
-          return res.status(400).json({ message: "Refund already processed for this booking" })
-        }
-
-        if (refundResult.status === "refund_failed") {
-          return res.status(502).json({
-            message: refundResult.message || "Failed to process refund for admin booking cancellation",
-          })
-        }
-
-        return res.status(502).json({
-          message: "Failed to process refund for admin booking cancellation",
-        })
+        return res.status(409).json({ message: "Invalid status transition" })
       }
 
       const updatedBooking = await updateBookingStatus(

@@ -219,6 +219,20 @@ export async function cancelBookingForUser(
   return (result.rowCount ?? 0) > 0
 }
 
+export async function cancelBookingById(id: number): Promise<boolean> {
+  const result = await pool.query(
+    `
+      UPDATE bookings
+      SET status = 'cancelled',
+          updated_at = NOW()
+      WHERE id = $1
+        AND status != 'cancelled'
+    `,
+    [id],
+  )
+  return (result.rowCount ?? 0) > 0
+}
+
 export async function deleteBookingForUser(
   id: number,
   userId: number,
@@ -553,7 +567,42 @@ function mapRowToAdminBooking(row: AdminBookingRow): AdminBooking {
   }
 }
 
-export async function findAllBookingsWithDetails(): Promise<AdminBooking[]> {
+export type BookingFilters = {
+  status?: string
+  paymentStatus?: string
+  propertyId?: number
+  startDate?: string
+  endDate?: string
+}
+
+export async function findAllBookingsWithDetails(filters?: BookingFilters): Promise<AdminBooking[]> {
+  const conditions: string[] = []
+  const values: any[] = []
+  let paramIdx = 1
+
+  if (filters?.status) {
+    conditions.push(`b.status = $${paramIdx++}`)
+    values.push(filters.status)
+  }
+  if (filters?.paymentStatus) {
+    conditions.push(`b.payment_status = $${paramIdx++}`)
+    values.push(filters.paymentStatus)
+  }
+  if (filters?.propertyId) {
+    conditions.push(`b.property_id = $${paramIdx++}`)
+    values.push(filters.propertyId)
+  }
+  if (filters?.startDate) {
+    conditions.push(`b.check_in >= $${paramIdx++}`)
+    values.push(filters.startDate)
+  }
+  if (filters?.endDate) {
+    conditions.push(`b.check_out <= $${paramIdx++}`)
+    values.push(filters.endDate)
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
+
   const result = await pool.query<AdminBookingRow>(`
     SELECT
       b.id,
@@ -578,8 +627,9 @@ export async function findAllBookingsWithDetails(): Promise<AdminBooking[]> {
     FROM bookings b
     JOIN users u ON b.user_id = u.id
     JOIN properties p ON b.property_id = p.id
+    ${whereClause}
     ORDER BY b.id DESC
-  `)
+  `, values)
 
   return result.rows.map(mapRowToAdminBooking)
 }
@@ -589,6 +639,19 @@ export async function updateBookingStatus(
   currentStatus: string,
   newStatus: string,
 ): Promise<Booking | null> {
+  if (currentStatus === "pending" && newStatus === "confirmed") {
+    throw new Error("Invalid transition: pending to confirmed is allowed only through the payment confirmation flow")
+  }
+  if (currentStatus === "confirmed" && newStatus === "cancelled") {
+    throw new Error("Invalid transition: confirmed to cancelled allowed only through the existing cancellation/refund workflow")
+  }
+  if (currentStatus === "cancelled") {
+    throw new Error("Invalid transition: booking is already cancelled")
+  }
+  if (currentStatus === "completed" && newStatus !== "completed") {
+    throw new Error("Invalid transition: booking is already completed")
+  }
+
   const result = await pool.query<BookingRow>(
     `
       UPDATE bookings
