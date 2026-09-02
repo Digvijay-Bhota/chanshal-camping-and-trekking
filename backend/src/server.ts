@@ -1454,7 +1454,7 @@ app.get(
     const startDateStr = startDate.trim().split("T")[0]
     const endDateStr = endDate.trim().split("T")[0]
 
-    const dateRegex = /^\\d{4}-\\d{2}-\\d{2}$/
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
     if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
       return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD." })
     }
