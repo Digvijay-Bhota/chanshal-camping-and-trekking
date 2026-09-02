@@ -55,6 +55,9 @@ import {
 import {
   checkPropertyAvailability,
   getAdminPropertyAvailability,
+  getPropertyAvailabilityBlocks,
+  createPropertyAvailabilityBlock,
+  deletePropertyAvailabilityBlock,
 } from "./modules/availability/availability.repository"
 
 const app = express()
@@ -1000,6 +1003,12 @@ app.post(
           .json({ message: "Not enough capacity available for the selected dates" })
       }
 
+      if (result.status === "availability_blocked") {
+        return res
+          .status(409)
+          .json({ message: "Property is closed for the selected dates" })
+      }
+
       const dbBooking = result.booking
 
       return res.status(201).json({
@@ -1503,6 +1512,127 @@ app.get(
     } catch (error) {
       console.error("Failed to check admin property availability:", error)
       return res.status(500).json({ message: "Failed to calculate availability" })
+    }
+  }
+)
+
+// 🚫 GET PROPERTY AVAILABILITY BLOCKS (ADMIN)
+app.get(
+  "/api/admin/properties/:id/availability-blocks",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const propertyId = Number(req.params.id)
+    if (!Number.isInteger(propertyId) || propertyId <= 0) {
+      return res.status(400).json({ message: "Invalid property ID" })
+    }
+
+    try {
+      const blocks = await getPropertyAvailabilityBlocks(propertyId)
+      return res.status(200).json(blocks)
+    } catch (error) {
+      console.error("Failed to fetch availability blocks:", error)
+      return res.status(500).json({ message: "Failed to fetch availability blocks" })
+    }
+  }
+)
+
+// 🚫 CREATE PROPERTY AVAILABILITY BLOCK (ADMIN)
+app.post(
+  "/api/admin/properties/:id/availability-blocks",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest
+    const userId = authReq.userId
+
+    if (!userId) {
+      return res.status(401).json({ message: "Unauthorized" })
+    }
+
+    const propertyId = Number(req.params.id)
+
+    if (!Number.isInteger(propertyId) || propertyId <= 0) {
+      return res.status(400).json({ message: "Invalid property ID" })
+    }
+
+    const { startDate, endDate, reason } = req.body
+
+    if (!startDate || typeof startDate !== "string" || !startDate.trim()) {
+      return res.status(400).json({ message: "Invalid start date" })
+    }
+    if (!endDate || typeof endDate !== "string" || !endDate.trim()) {
+      return res.status(400).json({ message: "Invalid end date" })
+    }
+
+    const startDateStr = startDate.trim().split("T")[0]
+    const endDateStr = endDate.trim().split("T")[0]
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+    if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
+      return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD." })
+    }
+
+    const inDateObj = new Date(startDateStr)
+    const outDateObj = new Date(endDateStr)
+
+    if (isNaN(inDateObj.getTime()) || isNaN(outDateObj.getTime())) {
+      return res.status(400).json({ message: "Invalid dates" })
+    }
+
+    if (outDateObj <= inDateObj) {
+      return res.status(400).json({ message: "endDate must be strictly after startDate" })
+    }
+
+    const diffTime = outDateObj.getTime() - inDateObj.getTime()
+    const diffDays = diffTime / (1000 * 60 * 60 * 24)
+    if (diffDays > 365) {
+      return res.status(400).json({ message: "Block range cannot exceed 365 days" })
+    }
+
+    const trimmedReason = reason && typeof reason === "string" ? reason.trim().substring(0, 500) : null
+
+    try {
+      // Check property exists (we could check via property repo, but getAdminPropertyAvailability does it similarly)
+      const propExists = await pool.query(`SELECT id FROM properties WHERE id = $1`, [propertyId])
+      if (propExists.rows.length === 0) {
+        return res.status(404).json({ message: "Property not found" })
+      }
+
+      const block = await createPropertyAvailabilityBlock(propertyId, startDateStr, endDateStr, trimmedReason, userId)
+      return res.status(201).json(block)
+    } catch (error) {
+      console.error("Failed to create availability block:", error)
+      return res.status(500).json({ message: "Failed to create availability block" })
+    }
+  }
+)
+
+// 🚫 DELETE PROPERTY AVAILABILITY BLOCK (ADMIN)
+app.delete(
+  "/api/admin/properties/:id/availability-blocks/:blockId",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const propertyId = Number(req.params.id)
+    const blockId = Number(req.params.blockId)
+
+    if (!Number.isInteger(propertyId) || propertyId <= 0) {
+      return res.status(400).json({ message: "Invalid property ID" })
+    }
+    if (!Number.isInteger(blockId) || blockId <= 0) {
+      return res.status(400).json({ message: "Invalid block ID" })
+    }
+
+    try {
+      const deleted = await deletePropertyAvailabilityBlock(blockId, propertyId)
+      if (!deleted) {
+        return res.status(404).json({ message: "Block not found or does not belong to this property" })
+      }
+      return res.status(200).json({ message: "Availability block deleted successfully" })
+    } catch (error) {
+      console.error("Failed to delete availability block:", error)
+      return res.status(500).json({ message: "Failed to delete availability block" })
     }
   }
 )

@@ -329,6 +329,7 @@ export type CreateBookingTransactionResult =
   | { status: "camp_not_found" }
   | { status: "overlap" }
   | { status: "capacity_unavailable" }
+  | { status: "availability_blocked" }
 
 export async function createBookingTransaction(
   input: CreateBookingTransactionInput,
@@ -382,6 +383,23 @@ export async function createBookingTransaction(
     }
     const pricePerNight = Number(propRes.rows[0].price_per_night)
     const capacity = Number(propRes.rows[0].capacity)
+
+    // 3.5 Check Availability Blocks (Blackouts)
+    const blockRes = await client.query(
+      `
+        SELECT 1
+        FROM property_availability_blocks
+        WHERE property_id = $1
+          AND start_date < $3
+          AND end_date > $2
+        LIMIT 1
+      `,
+      [input.propertyId, input.checkIn, input.checkOut]
+    )
+    if (blockRes.rows.length > 0) {
+      await client.query("ROLLBACK")
+      return { status: "availability_blocked" }
+    }
 
     // 4. Overlap & Capacity check
     const capacityRes = await client.query(

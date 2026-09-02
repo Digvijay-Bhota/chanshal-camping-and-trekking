@@ -94,6 +94,7 @@ function Booking() {
     availableCapacity?: number
     capacity?: number
     message?: string
+    blocked?: boolean
   } | null>(null)
 
   const [form, setForm] = useState({
@@ -161,6 +162,7 @@ function Booking() {
           available: Boolean(data.available),
           availableCapacity: data.availableCapacity,
           capacity: data.capacity,
+          blocked: Boolean(data.blocked),
         })
       })
       .catch(err => {
@@ -234,6 +236,9 @@ function Booking() {
         const errorData = await res.json().catch(() => ({}))
         if (res.status === 409 && errorData.message === "Not enough capacity available for the selected dates") {
           throw new Error("These dates no longer have enough capacity. Please adjust your dates or guest count.")
+        }
+        if (res.status === 409 && errorData.message === "Property is closed for the selected dates") {
+          throw new Error("Property is closed for the selected dates. Please choose different dates.")
         }
         throw new Error(errorData.message || "Booking creation failed")
       }
@@ -486,7 +491,9 @@ function Booking() {
                       }`}
                     >
                       {!availability.available
-                        ? "Not available for these dates"
+                        ? availability.blocked
+                          ? "Property is closed for the selected dates."
+                          : "Not available for these dates"
                         : form.people > (availability.availableCapacity ?? 0)
                         ? `Only ${availability.availableCapacity} guests are available for these dates.`
                         : `Available — ${availability.availableCapacity} guests remaining`}

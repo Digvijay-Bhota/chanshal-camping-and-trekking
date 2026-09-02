@@ -6,6 +6,8 @@ export type AvailabilityResult = {
   bookedGuests: number
   availableCapacity: number
   available: boolean
+  blocked: boolean
+  blockReason: string | null
 }
 
 export async function checkPropertyAvailability(
@@ -18,7 +20,21 @@ export async function checkPropertyAvailability(
       SELECT
         p.id AS property_id,
         p.capacity,
-        COALESCE(SUM(b.guests), 0) AS booked_guests
+        COALESCE(SUM(b.guests), 0) AS booked_guests,
+        (
+          SELECT reason FROM property_availability_blocks pab
+          WHERE pab.property_id = p.id
+            AND pab.start_date < $2
+            AND pab.end_date > $1
+          ORDER BY pab.id ASC
+          LIMIT 1
+        ) AS block_reason,
+        EXISTS (
+          SELECT 1 FROM property_availability_blocks pab
+          WHERE pab.property_id = p.id
+            AND pab.start_date < $2
+            AND pab.end_date > $1
+        ) AS is_blocked
       FROM properties p
       LEFT JOIN bookings b ON b.property_id = p.id
         AND b.status != 'cancelled'
@@ -37,19 +53,27 @@ export async function checkPropertyAvailability(
 
   const row = result.rows[0]
   const capacity = Number(row.capacity)
-  const bookedGuests = Number(row.booked_guests)
+  const isBlocked = Boolean(row.is_blocked)
+  const blockReason = row.block_reason || null
+  const bookedGuests = isBlocked ? 0 : Number(row.booked_guests)
 
   let availableCapacity = capacity - bookedGuests
   if (availableCapacity < 0) {
     availableCapacity = 0
   }
 
+  if (isBlocked) {
+    availableCapacity = 0
+  }
+
   return {
     propertyId: Number(row.property_id),
     capacity,
-    bookedGuests,
+    bookedGuests: Number(row.booked_guests), // Preserve actual booked guests count if needed, but wait: instruction says "If overlap exists: return availability with: availableCapacity = 0, available = false, blocked = true, blockReason = reason".
     availableCapacity,
-    available: availableCapacity > 0,
+    available: !isBlocked && availableCapacity > 0,
+    blocked: isBlocked,
+    blockReason,
   }
 }
 
@@ -58,6 +82,8 @@ export type AdminDailyAvailability = {
   bookedGuests: number
   availableCapacity: number
   available: boolean
+  blocked: boolean
+  blockReason: string | null
 }
 
 export type AdminAvailabilityResult = {
@@ -89,7 +115,21 @@ export async function getAdminPropertyAvailability(
     `
       SELECT
         TO_CHAR(d.date, 'YYYY-MM-DD') AS date,
-        COALESCE(SUM(b.guests), 0) AS booked_guests
+        COALESCE(SUM(b.guests), 0) AS booked_guests,
+        (
+          SELECT reason FROM property_availability_blocks pab
+          WHERE pab.property_id = $1
+            AND pab.start_date <= d.date
+            AND pab.end_date > d.date
+          ORDER BY pab.id ASC
+          LIMIT 1
+        ) AS block_reason,
+        EXISTS (
+          SELECT 1 FROM property_availability_blocks pab
+          WHERE pab.property_id = $1
+            AND pab.start_date <= d.date
+            AND pab.end_date > d.date
+        ) AS is_blocked
       FROM generate_series($2::date, $3::date, '1 day'::interval) AS d(date)
       LEFT JOIN bookings b
         ON b.property_id = $1
@@ -104,14 +144,20 @@ export async function getAdminPropertyAvailability(
 
   const days: AdminDailyAvailability[] = result.rows.map(row => {
     const bookedGuests = Number(row.booked_guests)
+    const isBlocked = Boolean(row.is_blocked)
+    const blockReason = row.block_reason || null
     let availableCapacity = capacity - bookedGuests
+
     if (availableCapacity < 0) availableCapacity = 0
+    if (isBlocked) availableCapacity = 0
 
     return {
       date: row.date,
-      bookedGuests,
+      bookedGuests, // Preserve actual booked guests for admin visibility
       availableCapacity,
-      available: availableCapacity > 0,
+      available: !isBlocked && availableCapacity > 0,
+      blocked: isBlocked,
+      blockReason,
     }
   })
 
@@ -122,4 +168,87 @@ export async function getAdminPropertyAvailability(
     endDate,
     days,
   }
+}
+
+export type AvailabilityBlock = {
+  id: number
+  propertyId: number
+  startDate: string
+  endDate: string
+  reason: string | null
+  createdBy: number
+  createdAt: Date
+  updatedAt: Date
+}
+
+export async function getPropertyAvailabilityBlocks(propertyId: number): Promise<AvailabilityBlock[]> {
+  const result = await pool.query(
+    `SELECT
+       id,
+       property_id,
+       TO_CHAR(start_date, 'YYYY-MM-DD') AS start_date,
+       TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date,
+       reason,
+       created_by,
+       created_at,
+       updated_at
+     FROM property_availability_blocks
+     WHERE property_id = $1
+     ORDER BY start_date ASC`,
+    [propertyId]
+  )
+
+  return result.rows.map(row => ({
+    id: Number(row.id),
+    propertyId: Number(row.property_id),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    reason: row.reason,
+    createdBy: Number(row.created_by),
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  }))
+}
+
+export async function createPropertyAvailabilityBlock(
+  propertyId: number,
+  startDate: string,
+  endDate: string,
+  reason: string | null,
+  createdBy: number
+): Promise<AvailabilityBlock> {
+  const result = await pool.query(
+    `INSERT INTO property_availability_blocks (property_id, start_date, end_date, reason, created_by)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING
+       id,
+       property_id,
+       TO_CHAR(start_date, 'YYYY-MM-DD') AS start_date,
+       TO_CHAR(end_date, 'YYYY-MM-DD') AS end_date,
+       reason,
+       created_by,
+       created_at,
+       updated_at`,
+    [propertyId, startDate, endDate, reason, createdBy]
+  )
+
+  const row = result.rows[0]
+  return {
+    id: Number(row.id),
+    propertyId: Number(row.property_id),
+    startDate: row.start_date,
+    endDate: row.end_date,
+    reason: row.reason,
+    createdBy: Number(row.created_by),
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  }
+}
+
+export async function deletePropertyAvailabilityBlock(blockId: number, propertyId: number): Promise<boolean> {
+  const result = await pool.query(
+    `DELETE FROM property_availability_blocks WHERE id = $1 AND property_id = $2`,
+    [blockId, propertyId]
+  )
+  return (result.rowCount ?? 0) > 0
 }
