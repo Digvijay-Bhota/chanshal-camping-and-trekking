@@ -10,6 +10,7 @@ export type Property = {
   rating: number
   imageUrl: string | null
   isActive: boolean
+  capacity: number
 }
 
 export type PropertyRow = {
@@ -22,6 +23,7 @@ export type PropertyRow = {
   rating: number | string
   image_url: string | null
   is_active: boolean
+  capacity: number | string
 }
 
 function mapRowToProperty(row: PropertyRow): Property {
@@ -35,6 +37,7 @@ function mapRowToProperty(row: PropertyRow): Property {
     rating: Number(row.rating),
     imageUrl: row.image_url,
     isActive: Boolean(row.is_active),
+    capacity: Number(row.capacity),
   }
 }
 
@@ -49,7 +52,8 @@ export async function findAllProperties(): Promise<Property[]> {
       price_per_night,
       rating,
       image_url,
-      is_active
+      is_active,
+      capacity
     FROM properties
     WHERE is_active = TRUE
     ORDER BY id ASC
@@ -72,7 +76,8 @@ export async function findPropertyById(
         price_per_night,
         rating,
         image_url,
-        is_active
+        is_active,
+        capacity
       FROM properties
       WHERE id = $1
         AND is_active = TRUE
@@ -98,7 +103,8 @@ export async function findAllPropertiesForAdmin(): Promise<Property[]> {
       price_per_night,
       rating,
       image_url,
-      is_active
+      is_active,
+      capacity
     FROM properties
     ORDER BY id ASC
   `)
@@ -114,6 +120,7 @@ export type CreatePropertyInput = {
   pricePerNight: number
   rating?: number
   imageUrl?: string | null
+  capacity?: number
 }
 
 export async function createProperty(
@@ -126,6 +133,7 @@ export async function createProperty(
   const pricePerNight = input.pricePerNight
   const rating = input.rating ?? 0
   const imageUrl = input.imageUrl ?? null
+  const capacity = input.capacity ?? 10
 
   const result = await pool.query<PropertyRow>(
     `
@@ -136,9 +144,10 @@ export async function createProperty(
         location,
         price_per_night,
         rating,
-        image_url
+        image_url,
+        capacity
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING
         id,
         name,
@@ -148,9 +157,10 @@ export async function createProperty(
         price_per_night,
         rating,
         image_url,
-        is_active
+        is_active,
+        capacity
     `,
-    [name, description, propertyType, location, pricePerNight, rating, imageUrl],
+    [name, description, propertyType, location, pricePerNight, rating, imageUrl, capacity],
   )
 
   return mapRowToProperty(result.rows[0])
@@ -164,6 +174,7 @@ export type UpdatePropertyInput = {
   pricePerNight?: number
   rating?: number
   imageUrl?: string | null
+  capacity?: number
 }
 
 export async function updateProperty(
@@ -209,9 +220,14 @@ export async function updateProperty(
     values.push(input.imageUrl)
   }
 
+  if (input.capacity !== undefined) {
+    updates.push(`capacity = $${paramIndex++}`)
+    values.push(input.capacity)
+  }
+
   if (updates.length === 0) {
     const res = await pool.query<PropertyRow>(
-      `SELECT id, name, description, property_type, location, price_per_night, rating, image_url, is_active FROM properties WHERE id = $1`,
+      `SELECT id, name, description, property_type, location, price_per_night, rating, image_url, is_active, capacity FROM properties WHERE id = $1`,
       [id],
     )
     return res.rows.length > 0 ? mapRowToProperty(res.rows[0]) : null
@@ -234,7 +250,8 @@ export async function updateProperty(
       price_per_night,
       rating,
       image_url,
-      is_active
+      is_active,
+      capacity
   `
 
   const result = await pool.query<PropertyRow>(query, values)
@@ -265,7 +282,8 @@ export async function setPropertyActive(
         price_per_night,
         rating,
         image_url,
-        is_active
+        is_active,
+        capacity
     `,
     [id, isActive],
   )

@@ -52,6 +52,10 @@ import {
   findAllBookingsWithDetails,
   updateBookingStatus,
 } from "./modules/bookings/booking.repository"
+import {
+  checkPropertyAvailability,
+  getAdminPropertyAvailability,
+} from "./modules/availability/availability.repository"
 
 const app = express()
 
@@ -727,6 +731,87 @@ app.get("/api/camps/:id/availability", async (req: Request, res: Response) => {
   }
 })
 
+// 🧮 GET PROPERTY CAPACITY AVAILABILITY (PHASE B)
+app.get("/api/properties/:id/availability", async (req: Request, res: Response) => {
+  const propertyId = Number(req.params.id)
+
+  if (!Number.isInteger(propertyId) || propertyId <= 0) {
+    return res.status(400).json({ message: "Invalid property ID" })
+  }
+
+  const { checkIn, checkOut } = req.query
+
+  if (!checkIn || typeof checkIn !== "string" || !checkIn.trim()) {
+    return res.status(400).json({ message: "Invalid check-in date" })
+  }
+
+  if (!checkOut || typeof checkOut !== "string" || !checkOut.trim()) {
+    return res.status(400).json({ message: "Invalid check-out date" })
+  }
+
+  const checkInStr = checkIn.trim().split("T")[0]
+  const checkOutStr = checkOut.trim().split("T")[0]
+
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (!dateRegex.test(checkInStr) || !dateRegex.test(checkOutStr)) {
+    return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD." })
+  }
+
+  const [inYear, inMonth, inDay] = checkInStr.split("-").map(Number)
+  const inDateObj = new Date(inYear, inMonth - 1, inDay)
+  if (
+    isNaN(inDateObj.getTime()) ||
+    inDateObj.getFullYear() !== inYear ||
+    inDateObj.getMonth() !== inMonth - 1 ||
+    inDateObj.getDate() !== inDay
+  ) {
+    return res.status(400).json({ message: "Invalid check-in date" })
+  }
+
+  const [outYear, outMonth, outDay] = checkOutStr.split("-").map(Number)
+  const outDateObj = new Date(outYear, outMonth - 1, outDay)
+  if (
+    isNaN(outDateObj.getTime()) ||
+    outDateObj.getFullYear() !== outYear ||
+    outDateObj.getMonth() !== outMonth - 1 ||
+    outDateObj.getDate() !== outDay
+  ) {
+    return res.status(400).json({ message: "Invalid check-out date" })
+  }
+
+  if (outDateObj <= inDateObj) {
+    return res.status(400).json({ message: "checkOut must be after checkIn" })
+  }
+
+  // Prevent unreasonable date ranges
+  const diffTime = outDateObj.getTime() - inDateObj.getTime()
+  const diffDays = diffTime / (1000 * 60 * 60 * 24)
+  if (diffDays > 365) {
+    return res.status(400).json({ message: "Date range cannot exceed 365 days" })
+  }
+
+  try {
+    const availability = await checkPropertyAvailability(propertyId, checkInStr, checkOutStr)
+
+    if (!availability) {
+      return res.status(404).json({ message: "Property not found or inactive" })
+    }
+
+    return res.status(200).json({
+      propertyId: availability.propertyId,
+      checkIn: checkInStr,
+      checkOut: checkOutStr,
+      capacity: availability.capacity,
+      bookedGuests: availability.bookedGuests,
+      availableCapacity: availability.availableCapacity,
+      available: availability.available,
+    })
+  } catch (error) {
+    console.error("Failed to check property availability:", error)
+    return res.status(500).json({ message: "Failed to calculate availability" })
+  }
+})
+
 /* =========================
    BOOKINGS
 ========================= */
@@ -907,6 +992,12 @@ app.post(
         return res
           .status(409)
           .json({ message: "Property is already booked for the selected dates" })
+      }
+
+      if (result.status === "capacity_unavailable") {
+        return res
+          .status(409)
+          .json({ message: "Not enough capacity available for the selected dates" })
       }
 
       const dbBooking = result.booking
@@ -1338,6 +1429,84 @@ app.get(
   },
 )
 
+// 🧮 GET PROPERTY AVAILABILITY (ADMIN)
+app.get(
+  "/api/admin/properties/:id/availability",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    const propertyId = Number(req.params.id)
+
+    if (!Number.isInteger(propertyId) || propertyId <= 0) {
+      return res.status(400).json({ message: "Invalid property ID" })
+    }
+
+    const { startDate, endDate } = req.query
+
+    if (!startDate || typeof startDate !== "string" || !startDate.trim()) {
+      return res.status(400).json({ message: "Invalid start date" })
+    }
+
+    if (!endDate || typeof endDate !== "string" || !endDate.trim()) {
+      return res.status(400).json({ message: "Invalid end date" })
+    }
+
+    const startDateStr = startDate.trim().split("T")[0]
+    const endDateStr = endDate.trim().split("T")[0]
+
+    const dateRegex = /^\\d{4}-\\d{2}-\\d{2}$/
+    if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
+      return res.status(400).json({ message: "Invalid date format. Use YYYY-MM-DD." })
+    }
+
+    const [inYear, inMonth, inDay] = startDateStr.split("-").map(Number)
+    const inDateObj = new Date(inYear, inMonth - 1, inDay)
+    if (
+      isNaN(inDateObj.getTime()) ||
+      inDateObj.getFullYear() !== inYear ||
+      inDateObj.getMonth() !== inMonth - 1 ||
+      inDateObj.getDate() !== inDay
+    ) {
+      return res.status(400).json({ message: "Invalid start date" })
+    }
+
+    const [outYear, outMonth, outDay] = endDateStr.split("-").map(Number)
+    const outDateObj = new Date(outYear, outMonth - 1, outDay)
+    if (
+      isNaN(outDateObj.getTime()) ||
+      outDateObj.getFullYear() !== outYear ||
+      outDateObj.getMonth() !== outMonth - 1 ||
+      outDateObj.getDate() !== outDay
+    ) {
+      return res.status(400).json({ message: "Invalid end date" })
+    }
+
+    if (outDateObj < inDateObj) {
+      return res.status(400).json({ message: "endDate must be after or equal to startDate" })
+    }
+
+    // Prevent unreasonable date ranges
+    const diffTime = outDateObj.getTime() - inDateObj.getTime()
+    const diffDays = diffTime / (1000 * 60 * 60 * 24)
+    if (diffDays > 365) {
+      return res.status(400).json({ message: "Date range cannot exceed 365 days" })
+    }
+
+    try {
+      const availability = await getAdminPropertyAvailability(propertyId, startDateStr, endDateStr)
+
+      if (!availability) {
+        return res.status(404).json({ message: "Property not found" })
+      }
+
+      return res.status(200).json(availability)
+    } catch (error) {
+      console.error("Failed to check admin property availability:", error)
+      return res.status(500).json({ message: "Failed to calculate availability" })
+    }
+  }
+)
+
 // ➕ CREATE PROPERTY (ADMIN)
 app.post(
   "/api/admin/properties",
@@ -1352,6 +1521,7 @@ app.post(
       pricePerNight,
       rating,
       imageUrl,
+      capacity,
     } = req.body
 
     if (!name || typeof name !== "string" || name.trim() === "") {
@@ -1393,6 +1563,16 @@ app.post(
     }
 
     if (
+      capacity !== undefined &&
+      capacity !== null &&
+      (typeof capacity !== "number" || isNaN(capacity) || capacity <= 0)
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Capacity must be a positive number" })
+    }
+
+    if (
       description !== undefined &&
       description !== null &&
       typeof description !== "string"
@@ -1418,6 +1598,7 @@ app.post(
         pricePerNight,
         rating: rating !== undefined && rating !== null ? rating : undefined,
         imageUrl: typeof imageUrl === "string" ? imageUrl.trim() : null,
+        capacity: capacity !== undefined && capacity !== null ? capacity : undefined,
       })
 
       return res.status(201).json({
@@ -1450,6 +1631,7 @@ app.patch(
       pricePerNight,
       rating,
       imageUrl,
+      capacity,
     } = req.body
 
     if (
@@ -1459,7 +1641,8 @@ app.patch(
       location === undefined &&
       pricePerNight === undefined &&
       rating === undefined &&
-      imageUrl === undefined
+      imageUrl === undefined &&
+      capacity === undefined
     ) {
       return res
         .status(400)
@@ -1538,6 +1721,19 @@ app.patch(
       }
       updatePayload.imageUrl =
         typeof imageUrl === "string" ? imageUrl.trim() : null
+    }
+
+    if (capacity !== undefined) {
+      if (
+        typeof capacity !== "number" ||
+        isNaN(capacity) ||
+        capacity <= 0
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Capacity must be a positive number" })
+      }
+      updatePayload.capacity = capacity
     }
 
     try {

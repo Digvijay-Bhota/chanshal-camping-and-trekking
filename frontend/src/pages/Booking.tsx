@@ -91,7 +91,9 @@ function Booking() {
   const [checkingAvailability, setCheckingAvailability] = useState(false)
   const [availability, setAvailability] = useState<{
     available: boolean
-    message: string
+    availableCapacity?: number
+    capacity?: number
+    message?: string
   } | null>(null)
 
   const [form, setForm] = useState({
@@ -128,32 +130,42 @@ function Booking() {
       return
     }
 
+    const [inYear, inMonth, inDay] = form.date.split("-").map(Number)
+    const inDateObj = new Date(inYear, inMonth - 1, inDay)
+    inDateObj.setDate(inDateObj.getDate() + form.days)
+
+    const outYear = inDateObj.getFullYear()
+    const outMonth = String(inDateObj.getMonth() + 1).padStart(2, "0")
+    const outDay = String(inDateObj.getDate()).padStart(2, "0")
+    const checkOutStr = `${outYear}-${outMonth}-${outDay}`
+
     const controller = new AbortController()
     setCheckingAvailability(true)
 
     fetch(
-      `${API}/api/camps/${id}/availability?checkIn=${encodeURIComponent(form.date)}&days=${form.days}`,
+      `${API}/api/properties/${id}/availability?checkIn=${encodeURIComponent(form.date)}&checkOut=${encodeURIComponent(checkOutStr)}`,
       {
         credentials: "include",
         signal: controller.signal,
       }
     )
-      .then(res => {
-        if (!res.ok) throw new Error()
+      .then(async res => {
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          throw new Error(errData.message || "Failed to check availability")
+        }
         return res.json()
       })
       .then(data => {
         setAvailability({
           available: Boolean(data.available),
-          message:
-            data.message ||
-            (data.available
-              ? "Dates are available"
-              : "Property is already booked for the selected dates"),
+          availableCapacity: data.availableCapacity,
+          capacity: data.capacity,
         })
       })
       .catch(err => {
         if (err.name !== "AbortError") {
+          toast.error(err.message || "Failed to check availability")
           setAvailability(null)
         }
       })
@@ -190,7 +202,7 @@ function Booking() {
   const isSubmitDisabled =
     submitting ||
     checkingAvailability ||
-    (availability !== null && !availability.available)
+    (availability !== null && (!availability.available || form.people > (availability.availableCapacity ?? 0)))
 
   const handleSubmit = async () => {
     if (!isAuthenticated || !user) {
@@ -220,6 +232,9 @@ function Booking() {
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
+        if (res.status === 409 && errorData.message === "Not enough capacity available for the selected dates") {
+          throw new Error("These dates no longer have enough capacity. Please adjust your dates or guest count.")
+        }
         throw new Error(errorData.message || "Booking creation failed")
       }
 
@@ -465,12 +480,16 @@ function Booking() {
                   ) : availability !== null ? (
                     <span
                       className={`text-xs font-bold ${
-                        availability.available
+                        availability.available && form.people <= (availability.availableCapacity ?? 0)
                           ? "text-green-600 dark:text-green-400"
                           : "text-red-600 dark:text-red-400"
                       }`}
                     >
-                      {availability.available ? "Available ✅" : "Already booked ❌"}
+                      {!availability.available
+                        ? "Not available for these dates"
+                        : form.people > (availability.availableCapacity ?? 0)
+                        ? `Only ${availability.availableCapacity} guests are available for these dates.`
+                        : `Available — ${availability.availableCapacity} guests remaining`}
                     </span>
                   ) : null}
                 </div>

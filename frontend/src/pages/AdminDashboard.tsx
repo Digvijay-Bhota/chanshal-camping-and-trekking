@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react"
 import toast from "react-hot-toast"
 import { CheckCircle, XCircle, Clock, ShieldCheck, RefreshCw } from "lucide-react"
+import AdminAvailability from "../components/AdminAvailability"
 
 export interface AdminBooking {
   id: number
@@ -423,6 +424,8 @@ function AdminDashboard() {
             </div>
           </div>
         )}
+
+        <AdminAvailability />
       </div>
     </div>
   )

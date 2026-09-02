@@ -328,6 +328,7 @@ export type CreateBookingTransactionResult =
   | { status: "user_not_found" }
   | { status: "camp_not_found" }
   | { status: "overlap" }
+  | { status: "capacity_unavailable" }
 
 export async function createBookingTransaction(
   input: CreateBookingTransactionInput,
@@ -368,7 +369,7 @@ export async function createBookingTransaction(
     // 3. Check property exists & lock property row to serialize concurrent booking attempts for this camp
     const propRes = await client.query(
       `
-        SELECT id, price_per_night
+        SELECT id, price_per_night, capacity
         FROM properties
         WHERE id = $1
         FOR UPDATE
@@ -380,23 +381,25 @@ export async function createBookingTransaction(
       return { status: "camp_not_found" }
     }
     const pricePerNight = Number(propRes.rows[0].price_per_night)
+    const capacity = Number(propRes.rows[0].capacity)
 
-    // 4. Overlap check
-    const overlapRes = await client.query<BookingRow>(
+    // 4. Overlap & Capacity check
+    const capacityRes = await client.query(
       `
-        SELECT id
+        SELECT COALESCE(SUM(guests), 0) as booked_guests
         FROM bookings
         WHERE property_id = $1
           AND status != 'cancelled'
           AND check_in < $3
           AND check_out > $2
-        LIMIT 1
       `,
       [input.propertyId, input.checkIn, input.checkOut],
     )
-    if (overlapRes.rows.length > 0) {
+    const bookedGuests = Number(capacityRes.rows[0].booked_guests)
+    const availableCapacity = capacity - bookedGuests
+    if (input.guests > availableCapacity) {
       await client.query("ROLLBACK")
-      return { status: "overlap" }
+      return { status: "capacity_unavailable" }
     }
 
     // 5. Booking INSERT
