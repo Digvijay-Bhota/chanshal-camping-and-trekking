@@ -6,7 +6,7 @@ type Props = {
   children: ReactNode
 }
 
-function ProtectedRoute({ children }: Props) {
+function AdminRoute({ children }: Props) {
   const location = useLocation()
   const { user, isAuthenticated, loading } = useAuth()
 
@@ -30,7 +30,11 @@ function ProtectedRoute({ children }: Props) {
     )
   }
 
+  if (user.role !== "admin") {
+    return <Navigate to="/" replace />
+  }
+
   return <>{children}</>
 }
 
-export default ProtectedRoute
+export default AdminRoute

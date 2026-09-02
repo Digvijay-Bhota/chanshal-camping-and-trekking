@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom"
 import { Toaster } from "react-hot-toast"
 
 import App from "./app"
+import { AuthProvider } from "./context/AuthContext"
 import "./style.css"
 
 // 🌙 LOAD SAVED THEME BEFORE APP RENDERS (prevents flicker)
@@ -21,7 +22,9 @@ if (!rootElement) {
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <BrowserRouter>
-      <App />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
 
       {/* 🔔 GLOBAL TOAST */}
       <Toaster
